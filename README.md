@@ -1,2 +1,2 @@
-# KD-Tree
-Parallelization of the Algorithm : k-d Tree and Nearest Neighbor Search
+# Parallelized Graph Convolutional Neural Networks
+Parallelization of the Algorithm: Graph Convolutional Neural Networks
