@@ -1,3 +1,10 @@
+/*
+ *
+ * Code Owner: TUM Parallel Programming (IN2147) Team
+ * Published By: Maximilian Stadler
+ *
+ */
+
 #ifndef UTILITY_H
 #define UTILITY_H
 
