@@ -1,7 +1,9 @@
 /*
  *
- * Code Owner: TUM Parallel Programming (IN2147) Team
- * Published By: Maximilian Stadler
+ * File: Model.cpp
+ * Authors: TUM Parallel Programming (IN2147) Team
+ * Published by: Maximilian Stadler
+ * Published on: Jun 8, 2021
  *
  */
 

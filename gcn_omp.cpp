@@ -1,3 +1,12 @@
+/*
+ *
+ * File: gcn_omp.cpp
+ * Authors: Batuhan Erden, Yigit Kemal Erinc and Berk Bolgul
+ * Created by: Batuhan Erden
+ * Created on: Jun 9, 2021
+ *
+ */
+
 #include "Model.hpp"
 #include "Node.hpp"
 
