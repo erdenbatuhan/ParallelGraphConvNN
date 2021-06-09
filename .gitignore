@@ -14,3 +14,29 @@ compile_commands.json
 CTestTestfile.cmake
 _deps
 
+# Output & Env
+*.o
+*.a
+*.env
+
+# Data & Perf Analysis
+data/*
+perf.*
+*.plist
+*.json
+!data/README.md
+!data/*.zip
+
+# ParProg
+sequential_improved
+sequential
+omp
+mpi
+hybrid
+
+sequential_submission
+omp_submission
+mpi_submission
+hybrid_submission
+
+
