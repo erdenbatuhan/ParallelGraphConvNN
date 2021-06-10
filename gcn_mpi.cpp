@@ -1,6 +1,6 @@
 /*
  *
- * File: gcn_omp.cpp
+ * File: gcn_mpi.cpp
  * Authors: Batuhan Erden, Yigit Kemal Erinc and Berk Bolgul
  * Created by: Batuhan Erden
  * Created on: Jun 9, 2021
