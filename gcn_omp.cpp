@@ -15,7 +15,7 @@
 
 
 /***************************************************************************************/
-void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
+void first_layer_transform(Node** nodes, int num_nodes, Model& model) {
     Node* node;
 
     for (int n = 0; n < num_nodes; ++n) {
@@ -32,7 +32,7 @@ void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
 
 
 /***************************************************************************************/
-void first_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
+void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
     // aggregate
     float* message;
     float norm;
@@ -70,7 +70,7 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
 
 /***************************************************************************************/
 // computation in second layer
-void second_layer_transform(Node** nodes, int num_nodes, Model &model) {
+void second_layer_transform(Node** nodes, int num_nodes, Model& model) {
     // transform
     Node* node;
 
@@ -88,7 +88,7 @@ void second_layer_transform(Node** nodes, int num_nodes, Model &model) {
 
 
 /***************************************************************************************/
-void second_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
+void second_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
     // aggregate
     Node* node;
 
@@ -122,7 +122,7 @@ void second_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
 
 
 /***************************************************************************************/
-void create_graph(Node** nodes, Model &model){
+void create_graph(Node** nodes, Model& model){
     // set neighbor relations
     int source, target;
 
@@ -168,7 +168,7 @@ int main(int argc, char** argv) {
     model.load_model();
 
     // create graph (i.e. load data into each node and load edge structure)
-    Node** nodes = (Node**)malloc(model.num_nodes * sizeof(Node*));
+    Node** nodes = (Node**) malloc(model.num_nodes * sizeof(Node*));
 
     if (nodes == nullptr) {
         exit(1);
