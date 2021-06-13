@@ -188,8 +188,8 @@ int main(int argc, char** argv) {
     second_layer_aggregate(nodes, model.num_nodes, model);
 
     // compute accuracy
-    float acc = 0.0;
     int pred, correct;
+    float acc = 0.0;
 
     for (int n = 0; n < model.num_nodes; ++n) {
         pred = nodes[n]->get_prediction();
