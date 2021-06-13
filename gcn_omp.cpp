@@ -190,13 +190,15 @@ int main(int argc, char** argv) {
     // compute accuracy
     float acc = 0.0;
     int pred, correct;
+
     for (int n = 0; n < model.num_nodes; ++n) {
         pred = nodes[n]->get_prediction();
-        correct = pred == model.labels[n] ? 1 : 0;
-        acc = acc + (float)correct;
+        correct = pred == model.labels[n];
+
+        acc += (float) correct;
     }
     
-    acc = acc / model.num_nodes;
+    acc /= model.num_nodes;
 
     std::cout << "accuracy " << acc << std::endl;
     std::cout << "DONE" << std::endl;
@@ -218,8 +220,8 @@ int main(int argc, char** argv) {
     free(nodes);
     model.free_model();
 
-    (void)argc;
-    (void)argv;
+    (void) argc;
+    (void) argv;
 
     return 0;
 }
