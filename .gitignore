@@ -14,7 +14,7 @@ CTestTestfile.cmake
 _deps
 
 # Output & Env
-*.exe
+*.exe*
 *.o
 *.a
 *.env
