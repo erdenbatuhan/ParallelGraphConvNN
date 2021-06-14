@@ -55,6 +55,7 @@ void first_layer_transform(Node** nodes, int num_nodes, Model& model, std::chron
     auto tick = std::chrono::high_resolution_clock::now();
 
     // transform
+    #pragma omp parallel for schedule(dynamic, NUM_THREADS)
     for (int i = 0; i < num_nodes; ++i) {
         Node* node = nodes[i];
 
