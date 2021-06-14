@@ -66,11 +66,11 @@ void first_layer_transform(Node** nodes, int num_nodes, Model& model) {
 
 /***************************************************************************************/
 void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
-    // aggregate
     float* message;
     float norm;
     Node* node;
 
+    // aggregate
     for (int n = 0; n < num_nodes; ++n) {
         node = nodes[n];
 
@@ -105,10 +105,8 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
 // computation in second layer
 void second_layer_transform(Node** nodes, int num_nodes, Model& model) {
     // transform
-    Node* node;
-
     for (int n = 0; n < num_nodes; ++n) {
-        node = nodes[n];
+        Node* node = nodes[n];
 
         for (int c_out = 0; c_out < node->num_classes; ++c_out) {
             for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
@@ -122,15 +120,12 @@ void second_layer_transform(Node** nodes, int num_nodes, Model& model) {
 
 /***************************************************************************************/
 void second_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
-    // aggregate
-    Node* node;
-
     float* message;
     float norm;
 
-    // for each node
+    // aggregate for each node
     for (int n = 0; n < num_nodes; ++n) {
-        node = nodes[n];
+        Node* node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
@@ -185,13 +180,13 @@ int main(int argc, char** argv) {
         nodes[n] = new Node(n, model, 1);
     }
     
-    create_graph(nodes, model, time_passed_create_graph);
+    create_graph(nodes, model);
 
     // perform actual computation in network
-    first_layer_transform(nodes, model.num_nodes, model, time_passed_first_layer_transform);
-    first_layer_aggregate(nodes, model.num_nodes, model, time_passed_first_layer_aggregate);
-    second_layer_transform(nodes, model.num_nodes, model, time_passed_second_layer_transform);
-    second_layer_aggregate(nodes, model.num_nodes, model, time_passed_second_layer_aggregate);
+    first_layer_transform(nodes, model.num_nodes, model);
+    first_layer_aggregate(nodes, model.num_nodes, model);
+    second_layer_transform(nodes, model.num_nodes, model);
+    second_layer_aggregate(nodes, model.num_nodes, model);
 
     // compute accuracy
     int pred, correct;
