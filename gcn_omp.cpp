@@ -14,14 +14,11 @@
 
 
 #define DEBUG 0
-#define PRINT_TIME 1
 #define NUM_THREADS 8
 
 
 /***************************************************************************************/
-void create_graph(Node** nodes, Model& model, std::chrono::duration<double>& time_passed) {
-    auto tick = std::chrono::high_resolution_clock::now();
-
+void create_graph(Node** nodes, Model& model) {
     // set neighbor relations
     int source, target;
 
@@ -43,17 +40,12 @@ void create_graph(Node** nodes, Model& model, std::chrono::duration<double>& tim
         node->neighbors.push_back(node->ID);
         node->degree = node->neighbors.size();
     }
-
-    auto tock = std::chrono::high_resolution_clock::now();
-    time_passed = tock - tick;
 }
 /***************************************************************************************/
 
 
 /***************************************************************************************/
-void first_layer_transform(Node** nodes, int num_nodes, Model& model, std::chrono::duration<double>& time_passed) {
-    auto tick = std::chrono::high_resolution_clock::now();
-
+void first_layer_transform(Node** nodes, int num_nodes, Model& model) {
     // transform
     #pragma omp parallel for schedule(dynamic, NUM_THREADS)
     for (int i = 0; i < num_nodes; ++i) {
@@ -68,17 +60,12 @@ void first_layer_transform(Node** nodes, int num_nodes, Model& model, std::chron
             }
         }
     }
-
-    auto tock = std::chrono::high_resolution_clock::now();
-    time_passed = tock - tick;
 }
 /***************************************************************************************/
 
 
 /***************************************************************************************/
-void first_layer_aggregate(Node** nodes, int num_nodes, Model& model, std::chrono::duration<double>& time_passed) {
-    auto tick = std::chrono::high_resolution_clock::now();
-
+void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
     // aggregate
     float* message;
     float norm;
@@ -110,18 +97,13 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model& model, std::chron
             node->hidden[c] = node->hidden[c] < 0.0 ? 0.0 : node->hidden[c];
         }
     }
-
-    auto tock = std::chrono::high_resolution_clock::now();
-    time_passed = tock - tick;
 }
 /***************************************************************************************/
 
 
 /***************************************************************************************/
 // computation in second layer
-void second_layer_transform(Node** nodes, int num_nodes, Model& model, std::chrono::duration<double>& time_passed) {
-    auto tick = std::chrono::high_resolution_clock::now();
-
+void second_layer_transform(Node** nodes, int num_nodes, Model& model) {
     // transform
     Node* node;
 
@@ -134,17 +116,12 @@ void second_layer_transform(Node** nodes, int num_nodes, Model& model, std::chro
             }
         }   
     }
-
-    auto tock = std::chrono::high_resolution_clock::now();
-    time_passed = tock - tick;
 }
 /***************************************************************************************/
 
 
 /***************************************************************************************/
-void second_layer_aggregate(Node** nodes, int num_nodes, Model& model, std::chrono::duration<double>& time_passed) {
-    auto tick = std::chrono::high_resolution_clock::now();
-
+void second_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
     // aggregate
     Node* node;
 
@@ -172,10 +149,7 @@ void second_layer_aggregate(Node** nodes, int num_nodes, Model& model, std::chro
         for (int c = 0; c < node->num_classes; ++c) {
             node->logits[c] += model.bias_2[c];
         }
-    }
-
-    auto tock = std::chrono::high_resolution_clock::now();
-    time_passed = tock - tick;      
+    }   
 }
 /***************************************************************************************/
 
@@ -194,13 +168,6 @@ int main(int argc, char** argv) {
     #else
         Model::specify_problem(dataset, &init_no, &seed);
     #endif
-
-    auto tick_total = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> time_passed_create_graph;
-    std::chrono::duration<double> time_passed_first_layer_transform;
-    std::chrono::duration<double> time_passed_first_layer_aggregate;
-    std::chrono::duration<double> time_passed_second_layer_transform;
-    std::chrono::duration<double> time_passed_second_layer_aggregate;
 
     // load model specifications and model weights
     Model model(dataset, init_no, seed);
@@ -261,18 +228,6 @@ int main(int argc, char** argv) {
 
     (void) argc;
     (void) argv;
-
-    auto tock_total = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> time_passed = tock_total - tick_total;
-
-    #if PRINT_TIME
-        std::cout << "(Total) time passed: " << time_passed.count() << std::endl;
-        std::cout << "(create_graph) time passed: " << time_passed_create_graph.count() << ", " << (time_passed_create_graph.count() / time_passed.count()) * 100 << "%" << std::endl;
-        std::cout << "(first_layer_transform) time passed: " << time_passed_first_layer_transform.count() << ", " << (time_passed_first_layer_transform.count() / time_passed.count()) * 100 << "%" << std::endl;
-        std::cout << "(first_layer_aggregate) time passed: " << time_passed_first_layer_aggregate.count() << ", " << (time_passed_first_layer_aggregate.count() / time_passed.count()) * 100 << "%" << std::endl;
-        std::cout << "(second_layer_transform) time passed: " << time_passed_second_layer_transform.count() << ", " << (time_passed_second_layer_transform.count() / time_passed.count()) * 100 << "%" << std::endl;
-        std::cout << "(second_layer_aggregate) time passed: " << time_passed_second_layer_aggregate.count() << ", " << (time_passed_second_layer_aggregate.count() / time_passed.count()) * 100 << "%" << std::endl;
-    #endif
 
     return 0;
 }
