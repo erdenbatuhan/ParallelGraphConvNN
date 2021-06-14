@@ -54,34 +54,6 @@ void create_graph(Node** nodes, Model& model, std::chrono::duration<double>& tim
 void first_layer_transform(Node** nodes, int num_nodes, Model& model, std::chrono::duration<double>& time_passed) {
     auto tick = std::chrono::high_resolution_clock::now();
 
-    for (int i = 0; i < num_nodes; ++i) {
-        Node* node = nodes[i];
-
-        // self-loops twice in edges, so ignore for now
-        // and add later
-        if (source != target) {
-            nodes[source]->neighbors.push_back(target);
-        }
-    }
-
-    // add self-loops
-    for (int n = 0; n < model.num_nodes; ++n) {
-        Node *node = nodes[n];
-
-        node->neighbors.push_back(node->ID);
-        node->degree = node->neighbors.size();
-    }
-
-    auto tock = std::chrono::high_resolution_clock::now();
-    time_passed = tock - tick;
-}
-/***************************************************************************************/
-
-
-/***************************************************************************************/
-void first_layer_transform(Node** nodes, int num_nodes, Model& model, std::chrono::duration<double>& time_passed) {
-    auto tick = std::chrono::high_resolution_clock::now();
-
     // transform
     for (int i = 0; i < num_nodes; ++i) {
         Node* node = nodes[i];
