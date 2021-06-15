@@ -14,17 +14,16 @@
 
 
 #define DEBUG 0
-#define NUM_THREADS 8
+#define NUM_THREADS 12
 
 
 /***************************************************************************************/
 void create_graph(Node** nodes, Model& model) {
     // set neighbor relations
-    int source, target;
-
+    #pragma omp parallel for
     for (int e = 0; e < model.num_edges; ++e) {
-        source = model.edges[e];
-        target = model.edges[model.num_edges + e];
+        int source = model.edges[e];
+        int target = model.edges[model.num_edges + e];
 
         // self-loops twice in edges, so ignore for now
         // and add later
@@ -34,6 +33,7 @@ void create_graph(Node** nodes, Model& model) {
     }
 
     // add self-loops
+    #pragma omp parallel for
     for (int n = 0; n < model.num_nodes; ++n) {
         Node *node = nodes[n];
 
@@ -47,49 +47,44 @@ void create_graph(Node** nodes, Model& model) {
 /***************************************************************************************/
 void first_layer_transform(Node** nodes, int num_nodes, Model& model) {
     // transform
-    #pragma omp parallel for schedule(dynamic, NUM_THREADS)
-    for (int i = 0; i < num_nodes; ++i) {
-        Node* node = nodes[i];
+    for (int n = 0; n < num_nodes; ++n) {
+        #pragma omp task default(none) firstprivate(nodes, n, model)
+        {
+            Node* node = nodes[n];
 
-        for (int c_in = 0; c_in < node->dim_features; ++c_in) {
-            float x_in = node->x[c_in];
-            float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
+            for (int c_in = 0; c_in < node->dim_features; ++c_in) {
+                float x_in = node->x[c_in];
+                float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
 
-            for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
-                node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
-            }
+                for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
+                    node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
+                }
+            }   
         }
     }
+
+    #pragma omp taskwait
 }
 /***************************************************************************************/
 
 
 /***************************************************************************************/
 void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
-    float* message;
-    float norm;
-    Node* node;
-
-    // aggregate
+    // aggregate for each node
     for (int n = 0; n < num_nodes; ++n) {
-        node = nodes[n];
+        Node* node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = nodes[neighbor]->tmp_hidden;
+            float* message = nodes[neighbor]->tmp_hidden;
 
             // normalization w.r.t. degrees of node and neighbor
-            norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
+            float norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
 
-            // aggregate normalized message
+            // aggregate normalized message and add bias
             for (int c = 0; c < node->dim_hidden; ++c) {
-                node->hidden[c] += message[c] / norm;
+                node->hidden[c] += message[c] / norm + model.bias_1[c];
             }
-        }
-
-        // add bias
-        for (int c = 0; c < node->dim_hidden; ++c) {
-            node->hidden[c] += model.bias_1[c];
         }
 
         // apply relu
@@ -106,45 +101,42 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
 void second_layer_transform(Node** nodes, int num_nodes, Model& model) {
     // transform
     for (int n = 0; n < num_nodes; ++n) {
-        Node* node = nodes[n];
+        #pragma omp task default(none) firstprivate(nodes, n, model)
+        {
+            Node* node = nodes[n];
 
-        for (int c_out = 0; c_out < node->num_classes; ++c_out) {
-            for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
-                node->tmp_logits[c_out] += node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out];
+            for (int c_out = 0; c_out < node->num_classes; ++c_out) {
+                for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
+                    node->tmp_logits[c_out] += node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out];
+                }
             }
-        }   
+        }
     }
+
+    #pragma omp taskwait
 }
 /***************************************************************************************/
 
 
 /***************************************************************************************/
 void second_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
-    float* message;
-    float norm;
-
     // aggregate for each node
     for (int n = 0; n < num_nodes; ++n) {
         Node* node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = nodes[neighbor]->tmp_logits;
+            float* message = nodes[neighbor]->tmp_logits;
 
             // normalization w.r.t. degrees of node and neighbor
-            norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
+            float norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
 
-            // aggregate normalized message
+            // aggregate normalized message and add bias
             for (int c = 0; c < node->num_classes; ++c) {
-                node->logits[c] += message[c] / norm;
+                node->logits[c] += message[c] / norm + model.bias_2[c];
             }
         }
-
-        // add bias
-        for (int c = 0; c < node->num_classes; ++c) {
-            node->logits[c] += model.bias_2[c];
-        }
-    }   
+    }
 }
 /***************************************************************************************/
 
@@ -175,7 +167,10 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
+    omp_set_num_threads(NUM_THREADS);
+
     // initialize nodes
+    #pragma omp parallel for
     for (int n = 0; n < model.num_nodes; ++n) {
         nodes[n] = new Node(n, model, 1);
     }
@@ -183,18 +178,22 @@ int main(int argc, char** argv) {
     create_graph(nodes, model);
 
     // perform actual computation in network
-    first_layer_transform(nodes, model.num_nodes, model);
-    first_layer_aggregate(nodes, model.num_nodes, model);
-    second_layer_transform(nodes, model.num_nodes, model);
-    second_layer_aggregate(nodes, model.num_nodes, model);
+    #pragma omp parallel
+    #pragma omp single
+    {
+        first_layer_transform(nodes, model.num_nodes, model);
+        first_layer_aggregate(nodes, model.num_nodes, model);
+        second_layer_transform(nodes, model.num_nodes, model);
+        second_layer_aggregate(nodes, model.num_nodes, model);
+    }
 
     // compute accuracy
-    int pred, correct;
     float acc = 0.0;
 
+    #pragma omp parallel for reduction(+: acc)
     for (int n = 0; n < model.num_nodes; ++n) {
-        pred = nodes[n]->get_prediction();
-        correct = pred == model.labels[n];
+        int pred = nodes[n]->get_prediction();
+        int correct = pred == model.labels[n];
 
         acc += (float) correct;
     }
@@ -212,7 +211,8 @@ int main(int argc, char** argv) {
         std::cout << "elapsed time " << elapsed_time.count() << " second" << std::endl;
     #endif
 
-    // clean-up 
+    // clean-up
+    #pragma omp parallel for
     for (int n = 0; n < model.num_nodes; ++n) {
         nodes[n]->free_node();
         delete nodes[n];
