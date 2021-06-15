@@ -71,6 +71,7 @@ void first_layer_transform(Node** nodes, int num_nodes, Model& model) {
 /***************************************************************************************/
 void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
     // aggregate for each node
+    #pragma omp parallel for
     for (int n = 0; n < num_nodes; ++n) {
         Node* node = nodes[n];
 
@@ -100,6 +101,7 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
 // computation in second layer
 void second_layer_transform(Node** nodes, int num_nodes, Model& model) {
     // transform
+    #pragma omp parallel for
     for (int n = 0; n < num_nodes; ++n) {
         Node* node = nodes[n];
 
@@ -119,6 +121,7 @@ void second_layer_transform(Node** nodes, int num_nodes, Model& model) {
 /***************************************************************************************/
 void second_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
     // aggregate for each node
+    #pragma omp parallel for
     for (int n = 0; n < num_nodes; ++n) {
         Node* node = nodes[n];
 
@@ -180,10 +183,11 @@ int main(int argc, char** argv) {
     #pragma omp single
     {
         first_layer_transform(nodes, model.num_nodes, model);
-        first_layer_aggregate(nodes, model.num_nodes, model);
-        second_layer_transform(nodes, model.num_nodes, model);
-        second_layer_aggregate(nodes, model.num_nodes, model);
     }
+
+    first_layer_aggregate(nodes, model.num_nodes, model);
+    second_layer_transform(nodes, model.num_nodes, model);
+    second_layer_aggregate(nodes, model.num_nodes, model);
 
     // compute accuracy
     float acc = 0.0;
