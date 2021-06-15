@@ -90,7 +90,7 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model& model) {
 
         // apply relu
         for (int c = 0; c < node->dim_hidden; ++c) {
-            node->hidden[c] = node->hidden[c] < 0.0 ? 0.0 : node->hidden[c];
+            node->hidden[c] = (node->hidden[c] >= 0.0) * node->hidden[c];
         }
     }
 }
