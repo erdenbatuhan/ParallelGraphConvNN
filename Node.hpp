@@ -18,7 +18,7 @@ class Node {
         int dim_features;       // input/feature dimension
         int dim_hidden;         // hidden dimension
         int num_classes;        // number of classes
-        int degree;             // degree of node 
+        int degree;             // degree of node
 
         float* x;               // attribute of node 
         float* tmp_hidden;      // holds copy of hidden representation (for aggregation)
