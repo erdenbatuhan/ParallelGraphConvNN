@@ -15,6 +15,33 @@
 
 
 /***************************************************************************************/
+void create_graph(Node** nodes, Model &model){
+    // set neighbor relations
+    int source, target;
+
+    for (int e = 0; e < model.num_edges; ++e) {
+        source = model.edges[e];
+        target = model.edges[model.num_edges + e];
+
+        // self-loops twice in edges, so ignore for now
+        // and add later
+        if (source != target) {
+            nodes[source]->neighbors.push_back(target);
+        }
+    }
+
+    // add self-loops
+    for (int n = 0; n < model.num_nodes; ++n) {
+        Node *node = nodes[n];
+
+        node->neighbors.push_back(node->ID);
+        node->degree = node->neighbors.size();
+    }
+}
+/***************************************************************************************/
+
+
+/***************************************************************************************/
 void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
     Node* node;
 
@@ -25,7 +52,7 @@ void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
             for (int c_in = 0; c_in < node->dim_features; ++c_in) {
                 node->tmp_hidden[c_out] += node->x[c_in] * model.weight_1[c_in * node->dim_hidden + c_out];
             }
-        }   
+        }
     }
 }
 /***************************************************************************************/
@@ -81,7 +108,7 @@ void second_layer_transform(Node** nodes, int num_nodes, Model &model) {
             for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
                 node->tmp_logits[c_out] += node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out];
             }
-        }   
+        }
     }
 }
 /***************************************************************************************/
@@ -122,33 +149,6 @@ void second_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
 
 
 /***************************************************************************************/
-void create_graph(Node** nodes, Model &model){
-    // set neighbor relations
-    int source, target;
-
-    for (int e = 0; e < model.num_edges; ++e) {
-        source = model.edges[e];
-        target = model.edges[model.num_edges + e];
-
-        // self-loops twice in edges, so ignore for now
-        // and add later
-        if (source != target) {
-            nodes[source]->neighbors.push_back(target);
-        }
-    }
-
-    // add self-loops
-    for (int n = 0; n < model.num_nodes; ++n) {
-        Node *node = nodes[n];
-
-        node->neighbors.push_back(node->ID);
-        node->degree = node->neighbors.size();
-    }
-}
-/***************************************************************************************/
-
-
-/***************************************************************************************/
 int main(int argc, char** argv) {
     int seed = -1;
     int init_no = -1;
@@ -168,7 +168,7 @@ int main(int argc, char** argv) {
     model.load_model();
 
     // create graph (i.e. load data into each node and load edge structure)
-    Node** nodes = (Node**)malloc(model.num_nodes * sizeof(Node*));
+    Node** nodes = (Node**) malloc(model.num_nodes * sizeof(Node*));
 
     if (nodes == nullptr) {
         exit(1);
@@ -189,14 +189,15 @@ int main(int argc, char** argv) {
 
     // compute accuracy
     float acc = 0.0;
-    int pred, correct;
+
     for (int n = 0; n < model.num_nodes; ++n) {
-        pred = nodes[n]->get_prediction();
-        correct = pred == model.labels[n] ? 1 : 0;
-        acc = acc + (float)correct;
+        int pred = nodes[n]->get_prediction();
+        int correct = pred == model.labels[n] ? 1 : 0;
+
+        acc += (float)correct;
     }
     
-    acc = acc / model.num_nodes;
+    acc /= model.num_nodes;
 
     std::cout << "accuracy " << acc << std::endl;
     std::cout << "DONE" << std::endl;
@@ -218,8 +219,8 @@ int main(int argc, char** argv) {
     free(nodes);
     model.free_model();
 
-    (void)argc;
-    (void)argv;
+    (void) argc;
+    (void) argv;
 
     return 0;
 }
