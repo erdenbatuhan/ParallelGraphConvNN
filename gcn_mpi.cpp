@@ -71,9 +71,12 @@ void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
     for (int n = 0; n < num_nodes; ++n) {
         node = nodes[n];
 
-        for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
-            for (int c_in = 0; c_in < node->dim_features; ++c_in) {
-                node->tmp_hidden[c_out] += node->x[c_in] * model.weight_1[c_in * node->dim_hidden + c_out];
+        for (int c_in = 0; c_in < node->dim_features; ++c_in) {
+            float x_in = node->x[c_in];
+            float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
+
+            for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
+                node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
             }
         }
     }
