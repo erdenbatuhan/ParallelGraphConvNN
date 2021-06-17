@@ -7,10 +7,10 @@
  *
  */
 
+#include <omp.h>
+
 #include "Model.hpp"
 #include "Node.hpp"
-
-#include <omp.h>
 
 
 #define DEBUG 0

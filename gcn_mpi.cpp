@@ -7,11 +7,33 @@
  *
  */
 
+#include <mpi.h>
+
 #include "Model.hpp"
 #include "Node.hpp"
 
 
 #define DEBUG 0
+
+
+/***************************************************************************************/
+/*
+ *
+ * MPI helper functions
+ *
+ */
+
+void init_mpi(int argc, char** argv, int* size, int* rank) {
+    MPI_Init(&argc, &argv);
+
+    MPI_Comm_size(MPI_COMM_WORLD, size);
+    MPI_Comm_rank(MPI_COMM_WORLD, rank);
+}
+
+int is_master(int rank) {
+    return rank == 0;
+}
+/***************************************************************************************/
 
 
 /***************************************************************************************/
@@ -150,6 +172,17 @@ void second_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
 
 /***************************************************************************************/
 int main(int argc, char** argv) {
+    // Initialize MPI
+    int size, rank;
+    init_mpi(argc, argv, &size, &rank);
+
+    // TODO: Remove!!
+    if (!is_master(rank)) {
+        // Finalize MPI and exit program
+        MPI_Finalize();
+        return 0;
+    }
+
     int seed = -1;
     int init_no = -1;
     std::string dataset("");
@@ -221,6 +254,9 @@ int main(int argc, char** argv) {
 
     (void) argc;
     (void) argv;
+
+    // Finalize MPI
+    MPI_Finalize();
 
     return 0;
 }
