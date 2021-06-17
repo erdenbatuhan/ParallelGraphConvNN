@@ -19,19 +19,37 @@
 /***************************************************************************************/
 /*
  *
- * MPI helper functions
+ * MPI constants and helper functions
  *
  */
 
-void init_mpi(int argc, char** argv, int* size, int* rank) {
-    MPI_Init(&argc, &argv);
+#define TAG_BCAST_STR 999
+#define TAG_BCAST_REGULAR 0
 
-    MPI_Comm_size(MPI_COMM_WORLD, size);
-    MPI_Comm_rank(MPI_COMM_WORLD, rank);
-}
 
-int is_master(int rank) {
-    return rank == 0;
+void bcast_str(int size, int rank, std::string& str) {
+    if (rank == 0) { // Master
+		for (int i = 1; i < size; i++) {
+            // send str (as char*) to the workers
+			MPI_Send(str.c_str(), str.size(), MPI_CHAR, i, TAG_BCAST_STR, MPI_COMM_WORLD);
+		}
+	} else { // Workers
+        // create the str buffer to be received (str will be received as a char* and then casted to string)
+        MPI_Status status;
+        int str_buffer_length;
+
+        MPI_Probe(0, TAG_BCAST_STR, MPI_COMM_WORLD, &status);
+        MPI_Get_count(&status, MPI_CHAR, &str_buffer_length);
+
+        char* str_buffer = new char[str_buffer_length];
+
+        // receive str (as char*) from the master
+		MPI_Recv(str_buffer, str_buffer_length, MPI_CHAR, 0, TAG_BCAST_STR, MPI_COMM_WORLD, &status);
+
+        // cast str to string, and then delete the str buffer
+        str = std::string(str_buffer, str_buffer_length);
+        delete[] str_buffer;
+	}
 }
 /***************************************************************************************/
 
@@ -64,20 +82,13 @@ void create_graph(Node** nodes, Model &model){
 
 
 /***************************************************************************************/
-void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
-    Node* node;
+void first_layer_transform(Node* node, Model &model, float* message) {
+    for (int c_in = 0; c_in < node->dim_features; ++c_in) {
+        float x_in = node->x[c_in];
+        float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
 
-    // transform
-    for (int n = 0; n < num_nodes; ++n) {
-        node = nodes[n];
-
-        for (int c_in = 0; c_in < node->dim_features; ++c_in) {
-            float x_in = node->x[c_in];
-            float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
-
-            for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
-                node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
-            }
+        for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
+            message[c_out] += x_in * *(weight_1_start_idx + c_out);
         }
     }
 }
@@ -85,21 +96,26 @@ void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
 
 
 /***************************************************************************************/
-void first_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
+void first_layer_aggregate(Node** nodes, Model &model, int lower_bound, int upper_bound) {
+    Node* node;
+    Node* neighbor_node;
+
     float* message;
     float norm;
-    Node* node;
 
     // aggregate for each node
-    for (int n = 0; n < num_nodes; ++n) {
+    for (int n = lower_bound; n < upper_bound; ++n) {
         node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = nodes[neighbor]->tmp_hidden;
+            neighbor_node = nodes[neighbor];
+            message = neighbor_node->tmp_hidden; // use already allocated mem
+
+            first_layer_transform(neighbor_node, model, message);
 
             // normalization w.r.t. degrees of node and neighbor
-            norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
+            norm = 1.0 / sqrt(node->degree * neighbor_node->degree);
 
             // aggregate normalized message
             for (int c = 0; c < node->dim_hidden; ++c) {
@@ -122,21 +138,13 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
 
 
 /***************************************************************************************/
-// computation in second layer
-void second_layer_transform(Node** nodes, int num_nodes, Model &model) {
-    Node* node;
+void second_layer_transform(Node* node, Model &model, float* message) {
+    for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
+        float h_in = node->hidden[c_in];
+        float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
 
-    // transform
-    for (int n = 0; n < num_nodes; ++n) {
-        node = nodes[n];
-
-        for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
-            float h_in = node->hidden[c_in];
-            float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
-
-            for (int c_out = 0; c_out < node->num_classes; ++c_out) {
-                node->tmp_logits[c_out] += h_in * *(weight_2_start_idx + c_out);
-            }
+        for (int c_out = 0; c_out < node->num_classes; ++c_out) {
+            message[c_out] += h_in * *(weight_2_start_idx + c_out);
         }
     }
 }
@@ -144,22 +152,26 @@ void second_layer_transform(Node** nodes, int num_nodes, Model &model) {
 
 
 /***************************************************************************************/
-void second_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
+void second_layer_aggregate(Node** nodes, Model &model, int lower_bound, int upper_bound) {
     Node* node;
+    Node* neighbor_node;
 
     float* message;
     float norm;
 
     // aggregate for each node
-    for (int n = 0; n < num_nodes; ++n) {
+    for (int n = lower_bound; n < upper_bound; ++n) {
         node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = nodes[neighbor]->tmp_logits;
+            neighbor_node = nodes[neighbor];
+            message = neighbor_node->tmp_logits; // use already allocated mem
+
+            second_layer_transform(neighbor_node, model, message);
 
             // normalization w.r.t. degrees of node and neighbor
-            norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
+            norm = 1.0 / sqrt(node->degree * neighbor_node->degree);
 
             // aggregate normalized message
             for (int c = 0; c < node->num_classes; ++c) {
@@ -178,29 +190,35 @@ void second_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
 
 /***************************************************************************************/
 int main(int argc, char** argv) {
-    // Initialize MPI
+    // initialize MPI
+    MPI_Init(&argc, &argv);
     int size, rank;
-    init_mpi(argc, argv, &size, &rank);
 
-    // TODO: Remove!!
-    if (!is_master(rank)) {
-        // Finalize MPI and exit program
-        MPI_Finalize();
-        return 0;
+    // determine the size and the rank
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    std::string dataset("");
+    int init_no = -1;
+    int seed = -1;
+
+    if (rank == 0) { // Master
+        // specify problem
+        #if DEBUG
+            // for measuring your local runtime
+            auto tick = std::chrono::high_resolution_clock::now();
+            Model::specify_problem(argc, argv, dataset, &init_no, &seed);
+        #else
+            Model::specify_problem(dataset, &init_no, &seed);
+        #endif
     }
 
-    int seed = -1;
-    int init_no = -1;
-    std::string dataset("");
+    // broadcast dataset
+    bcast_str(size, rank, dataset);
 
-    // specify problem
-    #if DEBUG
-        // for measuring your local runtime
-        auto tick = std::chrono::high_resolution_clock::now();
-        Model::specify_problem(argc, argv, dataset, &init_no, &seed);
-    #else
-        Model::specify_problem(dataset, &init_no, &seed);
-    #endif
+    // broadcast init_no and seed
+    MPI_Bcast(&init_no, 1, MPI_INT, TAG_BCAST_REGULAR, MPI_COMM_WORLD);
+    MPI_Bcast(&seed, 1, MPI_INT, TAG_BCAST_REGULAR, MPI_COMM_WORLD);   
 
     // load model specifications and model weights
     Model model(dataset, init_no, seed);
@@ -210,6 +228,8 @@ int main(int argc, char** argv) {
     Node** nodes = (Node**) malloc(model.num_nodes * sizeof(Node*));
 
     if (nodes == nullptr) {
+        // finalize MPI
+        MPI_Finalize();
         exit(1);
     }
 
@@ -217,37 +237,47 @@ int main(int argc, char** argv) {
     for (int n = 0; n < model.num_nodes; ++n) {
         nodes[n] = new Node(n, model, 1);
     }
-    
+
     create_graph(nodes, model);
 
+    // each process has its own data
+    const int chunk_size = std::ceil(model.num_nodes / size);
+	const int lower_bound = rank * chunk_size; 
+	const int upper_bound = std::min(lower_bound + chunk_size, model.num_nodes);
+
     // perform actual computation in network
-    first_layer_transform(nodes, model.num_nodes, model);
-    first_layer_aggregate(nodes, model.num_nodes, model);
-    second_layer_transform(nodes, model.num_nodes, model);
-    second_layer_aggregate(nodes, model.num_nodes, model);
+    first_layer_aggregate(nodes, model, lower_bound, upper_bound);
+    second_layer_aggregate(nodes, model, lower_bound, upper_bound);
 
     // compute accuracy
+    int pred, correct;
     float acc = 0.0;
 
-    for (int n = 0; n < model.num_nodes; ++n) {
-        int pred = nodes[n]->get_prediction();
-        int correct = pred == model.labels[n] ? 1 : 0;
+    for (int n = lower_bound; n < upper_bound; ++n) {
+        pred = nodes[n]->get_prediction();
+        correct = pred == model.labels[n];
 
-        acc += (float)correct;
+        acc += (float) correct;
     }
-    
-    acc /= model.num_nodes;
 
-    std::cout << "accuracy " << acc << std::endl;
-    std::cout << "DONE" << std::endl;
+    // collect accuracies from all processes and sum them up in the master
+    float sum_acc;
+    MPI_Reduce(&acc, &sum_acc, 1, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
 
-    #if DEBUG
-        // for measuring your local runtime
-        auto tock = std::chrono::high_resolution_clock::now();
+    if (rank == 0) { // Master
+        sum_acc /= model.num_nodes;
 
-        std::chrono::duration<double> elapsed_time = tock - tick;
-        std::cout << "elapsed time " << elapsed_time.count() << " second" << std::endl;
-    #endif
+        std::cout << "accuracy " << sum_acc << std::endl;
+        std::cout << "DONE" << std::endl;
+
+        #if DEBUG
+            // for measuring your local runtime
+            auto tock = std::chrono::high_resolution_clock::now();
+
+            std::chrono::duration<double> elapsed_time = tock - tick;
+            std::cout << "elapsed time " << elapsed_time.count() << " second" << std::endl;
+        #endif
+    }
 
     // clean-up 
     for (int n = 0; n < model.num_nodes; ++n) {
@@ -261,7 +291,7 @@ int main(int argc, char** argv) {
     (void) argc;
     (void) argv;
 
-    // Finalize MPI
+    // finalize MPI
     MPI_Finalize();
 
     return 0;
