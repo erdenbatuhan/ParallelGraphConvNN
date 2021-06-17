@@ -67,6 +67,7 @@ void create_graph(Node** nodes, Model &model){
 void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
     Node* node;
 
+    // transform
     for (int n = 0; n < num_nodes; ++n) {
         node = nodes[n];
 
@@ -82,11 +83,11 @@ void first_layer_transform(Node** nodes, int num_nodes, Model &model) {
 
 /***************************************************************************************/
 void first_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
-    // aggregate
     float* message;
     float norm;
     Node* node;
 
+    // aggregate for each node
     for (int n = 0; n < num_nodes; ++n) {
         node = nodes[n];
 
@@ -110,7 +111,7 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
 
         // apply relu
         for (int c = 0; c < node->dim_hidden; ++c) {
-            node->hidden[c] = node->hidden[c] < 0.0 ? 0.0 : node->hidden[c];
+            node->hidden[c] = (node->hidden[c] >= 0.0) * node->hidden[c];
         }
     }
 }
@@ -120,9 +121,9 @@ void first_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
 /***************************************************************************************/
 // computation in second layer
 void second_layer_transform(Node** nodes, int num_nodes, Model &model) {
-    // transform
     Node* node;
 
+    // transform
     for (int n = 0; n < num_nodes; ++n) {
         node = nodes[n];
 
@@ -138,13 +139,12 @@ void second_layer_transform(Node** nodes, int num_nodes, Model &model) {
 
 /***************************************************************************************/
 void second_layer_aggregate(Node** nodes, int num_nodes, Model &model) {
-    // aggregate
     Node* node;
 
     float* message;
     float norm;
 
-    // for each node
+    // aggregate for each node
     for (int n = 0; n < num_nodes; ++n) {
         node = nodes[n];
 
