@@ -130,9 +130,12 @@ void second_layer_transform(Node** nodes, int num_nodes, Model &model) {
     for (int n = 0; n < num_nodes; ++n) {
         node = nodes[n];
 
-        for (int c_out = 0; c_out < node->num_classes; ++c_out) {
-            for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
-                node->tmp_logits[c_out] += node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out];
+        for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
+            float h_in = node->hidden[c_in];
+            float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
+
+            for (int c_out = 0; c_out < node->num_classes; ++c_out) {
+                node->tmp_logits[c_out] += h_in * *(weight_2_start_idx + c_out);
             }
         }
     }
