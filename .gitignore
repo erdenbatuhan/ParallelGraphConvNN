@@ -33,10 +33,13 @@ sequential
 omp
 mpi
 hybrid
-
 sequential_submission
 omp_submission
 mpi_submission
 hybrid_submission
 
+# Accidentally created files by make cmd
+-o
+-fopenmp
+-DOMPI_SKIP_MPICXX
 
