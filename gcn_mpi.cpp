@@ -53,6 +53,34 @@ void bcast_str(int size, int rank, std::string& str) {
         delete[] str_buffer;
 	}
 }
+
+void provide_work_to_workers(int* start) { // Master
+    int curr_worker;
+
+    // receive work request from worker and send work
+    MPI_Recv(&curr_worker, 1, MPI_INT, MPI_ANY_SOURCE, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    MPI_Send(start, 1, MPI_INT, curr_worker, TAG_WORK_REQUEST, MPI_COMM_WORLD);
+}
+
+void send_kill_signal_to_workers(int size) { // Master
+    for (int i = 1; i < size; i++) {
+        int curr_worker;
+        const int work_kill_signal = WORK_KILL_SIGNAL;
+
+        // receive the last work request from worker and send kill signal (no work is left to do!)
+        MPI_Recv(&curr_worker, 1, MPI_INT, MPI_ANY_SOURCE, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_Send(&work_kill_signal, 1, MPI_INT, curr_worker, TAG_WORK_REQUEST, MPI_COMM_WORLD);
+    }
+}
+
+bool request_and_receive_work_from_master(int rank, int* start) { // Workers
+    // request and receive work from the master
+    MPI_Send(&rank, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD);
+    MPI_Recv(start, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // check if the master does not have any more work
+    return *start != WORK_KILL_SIGNAL;
+}
 /***************************************************************************************/
 
 
@@ -197,15 +225,38 @@ void second_layer_aggregate(std::vector<int> node_id_chunk, Node** nodes, Model 
 
 
 /***************************************************************************************/
-void compute_accuracy(std::vector<int> node_id_chunk, Node** nodes, Model& model, float& acc) {
+void compute_accuracy(int start, int end, Node** nodes, Model& model, float& acc) {
     int pred, correct;
 
-    for (int node_id : node_id_chunk) {
-        pred = nodes[node_id]->get_prediction();
-        correct = pred == model.labels[node_id];
+    for (int n = start; n < end; ++n) {
+        pred = nodes[n]->get_prediction();
+        correct = pred == model.labels[n];
 
         acc += (float) correct;
     }
+}
+
+void perform_computation(int start, int end, Node** nodes, Model& model) {
+    /*
+    * Note: In this implementation, the node ID is equal to the index. So, we can directly use IDs!
+    */
+
+    std::vector<int> node_id_chunk, neighbor_id_chunk;
+
+    // fill node_id and neighbor_id chunks
+    for (int n = start; n < end; ++n) {
+        node_id_chunk.push_back(n);
+
+        for (int neighbor : nodes[n]->neighbors) {
+            neighbor_id_chunk.push_back(neighbor);
+        }
+    }
+
+    // perform actual computation in network
+    first_layer_transform(neighbor_id_chunk, nodes, model);
+    first_layer_aggregate(node_id_chunk, nodes, model);
+    second_layer_transform(neighbor_id_chunk, nodes, model);
+    second_layer_aggregate(node_id_chunk, nodes, model);
 }
 /***************************************************************************************/
 
@@ -278,55 +329,16 @@ int main(int argc, char** argv) {
 
     if (rank == 0) { // Master
         for (; start < model.num_nodes; start += chunk_size) {
-			int curr_worker;
-
-            // receive work request from worker and send work
-			MPI_Recv(&curr_worker, 1, MPI_INT, MPI_ANY_SOURCE, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			MPI_Send(&start, 1, MPI_INT, curr_worker, TAG_WORK_REQUEST, MPI_COMM_WORLD);
+            provide_work_to_workers(&start);
 		}
 
-		for (int i = 1; i < size; i++) {
-			int curr_worker;
-            const int work_kill_signal = WORK_KILL_SIGNAL;
-
-			// receive the last work request from worker and send kill signal (no work is left to do!)
-			MPI_Recv(&curr_worker, 1, MPI_INT, MPI_ANY_SOURCE, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-			MPI_Send(&work_kill_signal, 1, MPI_INT, curr_worker, TAG_WORK_REQUEST, MPI_COMM_WORLD);
-		}
+		send_kill_signal_to_workers(size);
     } else { // Workers
-		while (true) {
-			// request and receive work from the master
-			MPI_Send(&rank, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD);
-			MPI_Recv(&start, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-			// check if the master does not have any more work
-			if (start == WORK_KILL_SIGNAL) {
-				break;
-			}
-
+		while (request_and_receive_work_from_master(rank, &start)) {
             const int end = std::min(start + chunk_size, model.num_nodes);
 
-            /*
-             * Note: In this implementation, the node ID is equal to the index. So, we can directly use IDs!
-             */
-            std::vector<int> node_id_chunk, neighbor_id_chunk;
-
-            // fill node_id and neighbor_id chunks
-            for (int n = start; n < end; ++n) {
-                node_id_chunk.push_back(n);
-
-                for (int neighbor : nodes[n]->neighbors) {
-                    neighbor_id_chunk.push_back(neighbor);
-                }
-            }
-
-			// perform actual computation in network
-            first_layer_transform(neighbor_id_chunk, nodes, model);
-            first_layer_aggregate(node_id_chunk, nodes, model);
-            second_layer_transform(neighbor_id_chunk, nodes, model);
-            second_layer_aggregate(node_id_chunk, nodes, model);
-
-            compute_accuracy(node_id_chunk, nodes, model, acc);
+            perform_computation(start, end, nodes, model);
+            compute_accuracy(start, end, nodes, model, acc);
 		}
 	}
 
