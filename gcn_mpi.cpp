@@ -14,7 +14,7 @@
 
 
 #define DEBUG 0
-#define CHUNK_MULTIPLIER 256 // The more this multiplier is, the smaller the chunks will be
+#define CHUNK_MULTIPLIER 16 // The more this multiplier is, the smaller the chunks will be
 #define WORK_KILL_SIGNAL -1 // Once this is received, the workers will stop requesting more work
 
 
@@ -112,40 +112,42 @@ void create_graph(Node** nodes, Model &model) {
 
 
 /***************************************************************************************/
-void first_layer_transform(std::vector<int> neighbor_id_chunk, Node** nodes, Model &model) {
-    Node* neighbor_node;
+float* first_layer_transform(int n, Node** nodes, Model &model, bool* processed) {
+    Node* node = nodes[n];
 
-    // transform
-    for (int neighbor_id : neighbor_id_chunk) {
-        neighbor_node = nodes[neighbor_id];
+    // transform if this node was not processed previously
+    if (!processed[n]) {
+        for (int c_in = 0; c_in < node->dim_features; ++c_in) {
+            float x_in = node->x[c_in];
+            float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
 
-        for (int c_in = 0; c_in < neighbor_node->dim_features; ++c_in) {
-            float x_in = neighbor_node->x[c_in];
-            float* weight_1_start_idx = model.weight_1 + (c_in * neighbor_node->dim_hidden);
-
-            for (int c_out = 0; c_out < neighbor_node->dim_hidden; ++c_out) {
-                neighbor_node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
+            for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
+                node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
             }
-        }  
+        }
+
+        processed[n] = true; // set processed to true
     }
+
+    return node->tmp_hidden;
 }
-/***************************************************************************************/
 
-
-/***************************************************************************************/
-void first_layer_aggregate(std::vector<int> node_id_chunk, Node** nodes, Model &model) {
+void first_layer_aggregate(const int start, const int end, Node** nodes, Model &model) {
     Node* node;
 
     float* message;
     float norm;
 
+    // keep the processed neighbors
+    bool* processed = (bool*) malloc(model.num_nodes * sizeof(bool));
+
     // aggregate for each node
-    for (int node_id : node_id_chunk) {
-        node = nodes[node_id];
+    for (int n = start; n < end; ++n) {
+        node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = nodes[neighbor]->tmp_hidden;
+            message = first_layer_transform(neighbor, nodes, model, processed);
 
             // normalization w.r.t. degrees of node and neighbor
             norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
@@ -171,13 +173,11 @@ void first_layer_aggregate(std::vector<int> node_id_chunk, Node** nodes, Model &
 
 
 /***************************************************************************************/
-void second_layer_transform(std::vector<int> node_id_chunk, Node** nodes, Model &model) {
-    Node* node;
+float* second_layer_transform(int n, Node** nodes, Model &model, bool* processed) {
+    Node* node = nodes[n];
 
-    // transform
-    for (int node_id : node_id_chunk) {
-        node = nodes[node_id];
-
+    // transform if this node was not processed previously
+    if (!processed[n]) {
         for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
             float h_in = node->hidden[c_in];
             float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
@@ -185,26 +185,30 @@ void second_layer_transform(std::vector<int> node_id_chunk, Node** nodes, Model 
             for (int c_out = 0; c_out < node->num_classes; ++c_out) {
                 node->tmp_logits[c_out] += h_in * *(weight_2_start_idx + c_out);
             }
-        }  
+        }
+
+        processed[n] = true; // set processed to true
     }
+
+    return node->tmp_logits;
 }
-/***************************************************************************************/
 
-
-/***************************************************************************************/
-void second_layer_aggregate(std::vector<int> node_id_chunk, Node** nodes, Model &model) {
+void second_layer_aggregate(const int start, const int end, Node** nodes, Model &model) {
     Node* node;
 
     float* message;
     float norm;
 
+    // keep the processed neighbors
+    bool* processed = (bool*) malloc(model.num_nodes * sizeof(bool));
+
     // aggregate for each node
-    for (int node_id : node_id_chunk) {
-        node = nodes[node_id];
+    for (int n = start; n < end; ++n) {
+        node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = nodes[neighbor]->tmp_logits;
+            message = second_layer_transform(neighbor, nodes, model, processed);
 
             // normalization w.r.t. degrees of node and neighbor
             norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
@@ -225,30 +229,7 @@ void second_layer_aggregate(std::vector<int> node_id_chunk, Node** nodes, Model 
 
 
 /***************************************************************************************/
-void perform_computation(int start, int end, Node** nodes, Model& model) {
-    /*
-    * Note: In this implementation, the node ID is equal to the index. So, we can directly use IDs!
-    */
-
-    std::vector<int> node_id_chunk, neighbor_id_chunk;
-
-    // fill node_id and neighbor_id chunks
-    for (int n = start; n < end; ++n) {
-        node_id_chunk.push_back(n);
-
-        for (int neighbor : nodes[n]->neighbors) {
-            neighbor_id_chunk.push_back(neighbor);
-        }
-    }
-
-    // perform actual computation in network
-    first_layer_transform(neighbor_id_chunk, nodes, model); // Only neighbors are processed here
-    first_layer_aggregate(node_id_chunk, nodes, model); // Only nodes are processed here
-    second_layer_transform(node_id_chunk, nodes, model); // Only nodes are processed here
-    second_layer_aggregate(node_id_chunk, nodes, model); // Only nodes are processed here
-}
-
-void compute_accuracy(int start, int end, Node** nodes, Model& model, float& acc) {
+void compute_accuracy(const int start, const int end, Node** nodes, Model& model, float& acc) {
     int pred, correct;
 
     for (int n = start; n < end; ++n) {
@@ -321,8 +302,8 @@ int main(int argc, char** argv) {
      * the master would process more nodes than the workers and hence be slower.
      * Since other workers would have to wait the master in this case, we use dynamic scheduling!
      */
-    // distribute work
-    const int chunk_size = std::ceil((float) (model.num_nodes / (CHUNK_MULTIPLIER * size)));
+    // distribute work (exluding master since master distributes the work)
+    const int chunk_size = std::ceil((float) (model.num_nodes / (CHUNK_MULTIPLIER * (size - 1))));
 
 	int start = 0;
     float acc = 0.0;
@@ -337,7 +318,10 @@ int main(int argc, char** argv) {
 		while (request_and_receive_work_from_master(rank, &start)) {
             const int end = std::min(start + chunk_size, model.num_nodes);
 
-            perform_computation(start, end, nodes, model);
+            // perform actual computation in network
+            first_layer_aggregate(start, end, nodes, model);
+            second_layer_aggregate(start, end, nodes, model);
+
             compute_accuracy(start, end, nodes, model, acc);
 		}
 	}
