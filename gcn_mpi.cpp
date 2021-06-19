@@ -171,19 +171,19 @@ void first_layer_aggregate(std::vector<int> node_id_chunk, Node** nodes, Model &
 
 
 /***************************************************************************************/
-void second_layer_transform(std::vector<int> neighbor_id_chunk, Node** nodes, Model &model) {
-    Node* neighbor_node;
+void second_layer_transform(std::vector<int> node_id_chunk, Node** nodes, Model &model) {
+    Node* node;
 
     // transform
-    for (int neighbor_id : neighbor_id_chunk) {
-        neighbor_node = nodes[neighbor_id];
+    for (int node_id : node_id_chunk) {
+        node = nodes[node_id];
 
-        for (int c_in = 0; c_in < neighbor_node->dim_hidden; ++c_in) {
-            float h_in = neighbor_node->hidden[c_in];
-            float* weight_2_start_idx = model.weight_2 + (c_in * neighbor_node->num_classes);
+        for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
+            float h_in = node->hidden[c_in];
+            float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
 
-            for (int c_out = 0; c_out < neighbor_node->num_classes; ++c_out) {
-                neighbor_node->tmp_logits[c_out] += h_in * *(weight_2_start_idx + c_out);
+            for (int c_out = 0; c_out < node->num_classes; ++c_out) {
+                node->tmp_logits[c_out] += h_in * *(weight_2_start_idx + c_out);
             }
         }  
     }
@@ -242,10 +242,10 @@ void perform_computation(int start, int end, Node** nodes, Model& model) {
     }
 
     // perform actual computation in network
-    first_layer_transform(neighbor_id_chunk, nodes, model);
-    first_layer_aggregate(node_id_chunk, nodes, model);
-    second_layer_transform(neighbor_id_chunk, nodes, model);
-    second_layer_aggregate(node_id_chunk, nodes, model);
+    first_layer_transform(neighbor_id_chunk, nodes, model); // Only neighbors are processed here
+    first_layer_aggregate(node_id_chunk, nodes, model); // Only nodes are processed here
+    second_layer_transform(node_id_chunk, nodes, model); // Only nodes are processed here
+    second_layer_aggregate(node_id_chunk, nodes, model); // Only nodes are processed here
 }
 
 void compute_accuracy(int start, int end, Node** nodes, Model& model, float& acc) {
