@@ -225,17 +225,6 @@ void second_layer_aggregate(std::vector<int> node_id_chunk, Node** nodes, Model 
 
 
 /***************************************************************************************/
-void compute_accuracy(int start, int end, Node** nodes, Model& model, float& acc) {
-    int pred, correct;
-
-    for (int n = start; n < end; ++n) {
-        pred = nodes[n]->get_prediction();
-        correct = pred == model.labels[n];
-
-        acc += (float) correct;
-    }
-}
-
 void perform_computation(int start, int end, Node** nodes, Model& model) {
     /*
     * Note: In this implementation, the node ID is equal to the index. So, we can directly use IDs!
@@ -257,6 +246,17 @@ void perform_computation(int start, int end, Node** nodes, Model& model) {
     first_layer_aggregate(node_id_chunk, nodes, model);
     second_layer_transform(neighbor_id_chunk, nodes, model);
     second_layer_aggregate(node_id_chunk, nodes, model);
+}
+
+void compute_accuracy(int start, int end, Node** nodes, Model& model, float& acc) {
+    int pred, correct;
+
+    for (int n = start; n < end; ++n) {
+        pred = nodes[n]->get_prediction();
+        correct = pred == model.labels[n];
+
+        acc += (float) correct;
+    }
 }
 /***************************************************************************************/
 
