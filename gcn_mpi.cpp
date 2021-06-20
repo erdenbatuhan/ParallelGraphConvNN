@@ -229,7 +229,7 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
         for (int neighbor : node->neighbors) {
             // continue if not processed before (in the first layer)
             if (!first_layer_processed_nodes[neighbor]) {
-                // TODO: Check => continue;
+                continue;
             }
 
             neighbor_node = nodes[neighbor];
