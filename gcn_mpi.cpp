@@ -112,11 +112,11 @@ void create_graph(Node** nodes, Model &model) {
 
 
 /***************************************************************************************/
-float* first_layer_transform(Node* node, Model &model) {
+float* first_layer_transform(Node* node, float* weight_1) {
     // transform
     for (int c_in = 0; c_in < node->dim_features; ++c_in) {
         float x_in = node->x[c_in];
-        float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
+        float* weight_1_start_idx = weight_1 + (c_in * node->dim_hidden);
 
         // if the input is zero, do not calculate the corresponding hidden values
         if (x_in == 0) {
@@ -142,6 +142,9 @@ bool* first_layer_aggregate(const int start, const int end, Node** nodes, Model 
     bool* processed_nodes = (bool*) malloc(model.num_nodes * sizeof(bool));
     bool* processed_neighbors = (bool*) malloc(model.num_nodes * sizeof(bool));
 
+    // weight
+    float* weight_1 = model.weight_1;
+
     // aggregate for each node
     for (int n = start; n < end; ++n) {
         node = nodes[n];
@@ -153,8 +156,8 @@ bool* first_layer_aggregate(const int start, const int end, Node** nodes, Model 
 
             // transform if not processed before
             if (!processed_neighbors[neighbor]) {
-                message = first_layer_transform(neighbor_node, model);
-                processed_neighbors[n] = true; // set processed to true
+                message = first_layer_transform(neighbor_node, weight_1);
+                processed_neighbors[neighbor] = true; // set processed to true
             }
 
             // normalization w.r.t. degrees of node and neighbor
@@ -185,11 +188,11 @@ bool* first_layer_aggregate(const int start, const int end, Node** nodes, Model 
 
 
 /***************************************************************************************/
-float* second_layer_transform(Node* node, Model &model) {
+float* second_layer_transform(Node* node, float* weight_2) {
     // transform
     for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
         float h_in = node->hidden[c_in];
-        float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
+        float* weight_2_start_idx = weight_2 + (c_in * node->num_classes);
 
         // if the input is zero, do not calculate the corresponding logits
         if (h_in == 0) {
@@ -204,7 +207,8 @@ float* second_layer_transform(Node* node, Model &model) {
     return node->tmp_logits;
 }
 
-void second_layer_aggregate(const int start, const int end, bool* first_layer_processed_nodes, Node** nodes, Model &model) {
+void second_layer_aggregate(const int start, const int end, Node** nodes, Model &model, 
+                            bool* first_layer_processed_nodes) {
     Node* node;
     Node* neighbor_node;
 
@@ -214,6 +218,9 @@ void second_layer_aggregate(const int start, const int end, bool* first_layer_pr
     // keep the processed neighbors
     bool* processed_neighbors = (bool*) malloc(model.num_nodes * sizeof(bool));
 
+    // weight
+    float* weight_2 = model.weight_2;
+
     // aggregate for each node
     for (int n = start; n < end; ++n) {
         node = nodes[n];
@@ -222,7 +229,7 @@ void second_layer_aggregate(const int start, const int end, bool* first_layer_pr
         for (int neighbor : node->neighbors) {
             // continue if not processed before (in the first layer)
             if (!first_layer_processed_nodes[neighbor]) {
-                continue;
+                // TODO: Check => continue;
             }
 
             neighbor_node = nodes[neighbor];
@@ -230,8 +237,8 @@ void second_layer_aggregate(const int start, const int end, bool* first_layer_pr
             
             // transform if not processed before (in the current layer)
             if (!processed_neighbors[neighbor]) {
-                message = second_layer_transform(neighbor_node, model);
-                processed_neighbors[n] = true; // set processed to true
+                message = second_layer_transform(neighbor_node, weight_2);
+                processed_neighbors[neighbor] = true; // set processed to true
             }
 
             // normalization w.r.t. degrees of node and neighbor
@@ -344,7 +351,7 @@ int main(int argc, char** argv) {
 
             // perform actual computation in network
             bool* first_layer_processed_nodes = first_layer_aggregate(start, end, nodes, model);
-            second_layer_aggregate(start, end, first_layer_processed_nodes, nodes, model);
+            second_layer_aggregate(start, end, nodes, model, first_layer_processed_nodes);
 
             compute_accuracy(start, end, nodes, model, acc);
 		}
