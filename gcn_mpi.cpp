@@ -14,7 +14,7 @@
 
 
 #define DEBUG 0
-#define CHUNK_MULTIPLIER 16 // The more this multiplier is, the smaller the chunks will be
+#define CHUNK_MULTIPLIER 12 // The more this multiplier is, the smaller the chunks will be
 #define WORK_KILL_SIGNAL -1 // Once this is received, the workers will stop requesting more work
 
 
