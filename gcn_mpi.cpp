@@ -131,31 +131,33 @@ float* first_layer_transform(int n, Node** nodes, Model &model, bool* processed)
             }
         }
 
-        processed[n] = true; // set processed to true
+        // set processed to true
+        processed[n] = true;
     }
 
     return node->tmp_hidden;
 }
 
-void first_layer_aggregate(const int start, const int end, Node** nodes, Model &model) {
+bool* first_layer_aggregate(const int start, const int end, Node** nodes, Model &model) {
     Node* node;
 
     float* message;
     float norm;
 
-    // keep the processed neighbors
-    bool* processed = (bool*) malloc(model.num_nodes * sizeof(bool));
+    // keep the processed nodes and neighbors
+    bool* processed_nodes = (bool*) malloc(model.num_nodes * sizeof(bool));
+    bool* processed_neighbors = (bool*) malloc(model.num_nodes * sizeof(bool));
 
     // aggregate for each node
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
         // aggregate from each neighbor
-        for (int neighbor : node->neighbors) {
-            message = first_layer_transform(neighbor, nodes, model, processed);
+        for (int neighbor_ind : node->neighbors) {
+            message = first_layer_transform(neighbor_ind, nodes, model, processed_neighbors);
 
             // normalization w.r.t. degrees of node and neighbor
-            norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
+            norm = 1.0 / sqrt(node->degree * nodes[neighbor_ind]->degree);
 
             // aggregate normalized message
             for (int c = 0; c < node->dim_hidden; ++c) {
@@ -172,7 +174,12 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
         for (int c = 0; c < node->dim_hidden; ++c) {
             node->hidden[c] = (node->hidden[c] >= 0.0) * node->hidden[c];
         }
+
+        // set processed to true
+        processed_nodes[n] = true;
     }
+
+    return processed_nodes;
 }
 /***************************************************************************************/
 
@@ -197,35 +204,39 @@ float* second_layer_transform(int n, Node** nodes, Model &model, bool* processed
             }
         }
 
-        processed[n] = true; // set processed to true
+        // set processed to true
+        processed[n] = true;
     }
 
     return node->tmp_logits;
 }
 
-void second_layer_aggregate(const int start, const int end, Node** nodes, Model &model) {
+void second_layer_aggregate(const int start, const int end, bool* first_layer_processed_nodes, Node** nodes, Model &model) {
     Node* node;
 
     float* message;
     float norm;
 
     // keep the processed neighbors
-    bool* processed = (bool*) malloc(model.num_nodes * sizeof(bool));
+    bool* processed_neighbors = (bool*) malloc(model.num_nodes * sizeof(bool));
 
     // aggregate for each node
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
-        // aggregate from each neighbor
-        for (int neighbor : node->neighbors) {
-            message = second_layer_transform(neighbor, nodes, model, processed);
+        // if the node was processed before in the first layer
+        if (first_layer_processed_nodes[n]) {
+            // aggregate from each neighbor
+            for (int neighbor_ind : node->neighbors) {
+                message = second_layer_transform(neighbor_ind, nodes, model, processed_neighbors);
 
-            // normalization w.r.t. degrees of node and neighbor
-            norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
+                // normalization w.r.t. degrees of node and neighbor
+                norm = 1.0 / sqrt(node->degree * nodes[neighbor_ind]->degree);
 
-            // aggregate normalized message
-            for (int c = 0; c < node->num_classes; ++c) {
-                node->logits[c] += message[c] / norm;
+                // aggregate normalized message
+                for (int c = 0; c < node->num_classes; ++c) {
+                    node->logits[c] += message[c] / norm;
+                }
             }
         }
 
@@ -329,8 +340,8 @@ int main(int argc, char** argv) {
             const int end = std::min(start + chunk_size, model.num_nodes);
 
             // perform actual computation in network
-            first_layer_aggregate(start, end, nodes, model);
-            second_layer_aggregate(start, end, nodes, model);
+            bool* first_layer_processed_nodes = first_layer_aggregate(start, end, nodes, model);
+            second_layer_aggregate(start, end, first_layer_processed_nodes, nodes, model);
 
             compute_accuracy(start, end, nodes, model, acc);
 		}
