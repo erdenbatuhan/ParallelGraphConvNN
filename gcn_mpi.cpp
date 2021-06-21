@@ -189,8 +189,10 @@ Node** create_nodes(const int rank, Model& model) {
     }
 
     // initialize nodes
+    Node* node;
+
     for (int n = 0; n < model.num_nodes; ++n) {
-        Node* node = new Node(n, model, rank == 0); // Only the master reads the X values!
+        node = new Node(n, model, rank == 0); // Only the master reads the X values!
         nodes[n] = node;
 
         if (rank != 0) { // Workers
