@@ -63,13 +63,29 @@ void send_kill_signal_to_workers(const int size) { // Master
     }
 }
 
-bool request_and_receive_work_from_master(const int rank, int* start) { // Workers
+bool receive_work_from_master(const int rank, int* start, const int chunk_size, Node** nodes, Model& model) { // Workers
     // request and receive work from the master
     MPI_Send(&rank, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD);
     MPI_Recv(start, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-    // check if the master does not have any more work
-    return *start != WORK_KILL_SIGNAL;
+    // check if the master does not have any more work left to do
+    if (*(start) == WORK_KILL_SIGNAL) {
+        return false;
+    }
+
+    // send data request to worker
+    MPI_Send(&rank, 1, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+
+    const int end = END(*(start), chunk_size, model.num_nodes);
+
+    // receive data from worker (for each neighbor, receive the corresponding X vector)
+    for (int n = *(start); n < end; ++n) {
+        for (int neighbor : nodes[n]->neighbors) {
+            MPI_Recv(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+    }
+
+    return true;
 }
 /***************************************************************************************/
 
@@ -451,16 +467,8 @@ int main(int argc, char** argv) {
 
         send_kill_signal_to_workers(size);
     } else { // Workers
-		while (request_and_receive_work_from_master(rank, &start)) {
-            MPI_Send(&rank, 1, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-
+		while (receive_work_from_master(rank, &start, chunk_size, nodes, model)) {
             const int end = END(start, chunk_size, model.num_nodes);
-
-            for (int n = start; n < end; ++n) {
-                for (int neighbor : nodes[n]->neighbors) {
-                    MPI_Recv(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                }
-            }
 
             // perform actual computation in network
             bool* first_layer_processed_nodes = first_layer_aggregate(start, end, nodes, model);
