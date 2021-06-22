@@ -470,6 +470,7 @@ int main(int argc, char** argv) {
                     float acc = 0.0;
                     MPI_Recv(&acc, 1, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
+                    // add the computed accuracy received to the summed accuracy
                     sum_acc += acc;
                 }
             }
@@ -522,7 +523,7 @@ int main(int argc, char** argv) {
                     float acc = 0.0;
                     compute_accuracy(start, end, nodes, model, acc);
 
-                    // send resulting accuracy to master
+                    // send the resulting accuracy to master
                     MPI_Send(&acc, 1, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
                 }
             }
