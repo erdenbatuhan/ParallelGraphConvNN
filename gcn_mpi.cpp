@@ -402,7 +402,7 @@ int main(int argc, char** argv) {
     float* tmp_hidden = first_layer_transform(chunk_size, start, end, nodes, model);
 
     if (rank == 0) { // Master
-        // Over-allocate in case there are remainders ("chunk_size * size" instead of "model.num_nodes")
+        // over-allocate in case there are remainders ("chunk_size * size" instead of "model.num_nodes")
         float* tmp_hidden_gathered = (float*) calloc(chunk_size * size * model.dim_hidden, sizeof(float));
 
         MPI_Gather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
@@ -424,7 +424,7 @@ int main(int argc, char** argv) {
     float* tmp_logits = second_layer_transform(chunk_size, start, end, nodes, model, full_hidden);
 
     if (rank == 0) { // Master
-        // Over-allocate in case there are remainders ("chunk_size * size" instead of "model.num_nodes")
+        // over-allocate in case there are remainders ("chunk_size * size" instead of "model.num_nodes")
         float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
 
         MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT, 
