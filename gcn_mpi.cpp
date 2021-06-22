@@ -27,21 +27,52 @@
 #define TAG_DATA_REQUEST 102
 #define TAG_RESULT_REQUEST 103
 
-#define CHUNK_MULTIPLIER 8 // The more this multiplier is, the smaller the chunks will be
+#define CHUNK_MULTIPLIER 1 // The more this multiplier is, the smaller the chunks will be
 #define WORK_KILL_SIGNAL -1 // Once this is received, the workers will stop requesting more work
 
 #define CHUNK_SIZE(num_nodes, size) std::ceil((float) num_nodes / (CHUNK_MULTIPLIER * size))
 #define END(start, chunk_size, num_nodes) std::min(start + chunk_size, num_nodes)
 
 
-int provide_work_to_workers(int* start) { // Master
+void provide_work_to_workers(int* start, const int chunk_size, Node** nodes, Model& model) { // Master
     int curr_worker;
+    const int end = END(*(start), chunk_size, model.num_nodes);
 
     // receive work request from worker and send work
     MPI_Recv(&curr_worker, 1, MPI_INT, MPI_ANY_SOURCE, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     MPI_Send(start, 1, MPI_INT, curr_worker, TAG_WORK_REQUEST, MPI_COMM_WORLD);
 
-    return curr_worker;
+    // receive data request from worker
+    MPI_Recv(&curr_worker, 1, MPI_INT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // send data to worker (for each neighbor, send the corresponding X vector)
+    for (int n = *(start); n < end; ++n) {
+        //MPI_Send(&nodes[n]->degree, 1, MPI_INT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+        //MPI_Send(&nodes[n]->neighbors[0], nodes[n]->degree, MPI_INT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+
+        // for (int neighbor : nodes[n]->neighbors) {
+        //     // MPI_Send(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+        //     //MPI_Send(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+        //     //MPI_Send(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+        // }
+
+        MPI_Send(nodes[n]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+
+        //MPI_Send(nodes[n]->hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+        //MPI_Send(nodes[n]->logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+    }
+
+    // // get results from the workers
+    // for (int n = *(start); n < end; ++n) {
+    //     //for (int neighbor : nodes[n]->neighbors) {
+    //         //MPI_Recv(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    //         //MPI_Recv(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    //         //MPI_Recv(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    //     //}
+
+    //     MPI_Recv(nodes[n]->hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    //     //MPI_Recv(nodes[n]->logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    // }
 }
 
 void send_kill_signal_to_workers(const int size) { // Master
@@ -55,13 +86,41 @@ void send_kill_signal_to_workers(const int size) { // Master
     }
 }
 
-bool receive_work_from_master(const int rank, int* start) { // Workers
+bool receive_work_from_master(const int rank, int* start, const int chunk_size, Node** nodes, Model& model) { // Workers
     // request and receive work from the master
     MPI_Send(&rank, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD);
     MPI_Recv(start, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
     // check if the master does not have any more work left to do
-    return *(start) != WORK_KILL_SIGNAL;
+    if (*(start) == WORK_KILL_SIGNAL) {
+        return false;
+    }
+
+    // send data request to worker
+    MPI_Send(&rank, 1, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+
+    const int end = END(*(start), chunk_size, model.num_nodes);
+
+    // receive data from worker (for each neighbor, receive the corresponding X vector)
+    for (int n = *(start); n < end; ++n) {
+        //MPI_Recv(&nodes[n]->degree, 1, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        //nodes[n]->neighbors.resize(nodes[n]->degree);
+        //MPI_Recv(&nodes[n]->neighbors[0], nodes[n]->degree, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        // for (int neighbor : nodes[n]->neighbors) {
+        //     MPI_Recv(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        //     //MPI_Recv(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        //     //MPI_Recv(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        // }
+
+        MPI_Recv(nodes[n]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        //MPI_Recv(nodes[n]->hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        //MPI_Recv(nodes[n]->logits, model.num_classes, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    }
+
+    return true;
 }
 /***************************************************************************************/
 
@@ -141,7 +200,7 @@ Model load_model(const int rank, std::string dataset, int init_no, int seed) {
 
 Model create_model(const int rank) {
     // initialize the parameters needed for model creation
-    std::string dataset("");
+    std::string dataset("COAUTHORCS");
     int init_no = -1;
     int seed = -1;
 
@@ -184,9 +243,10 @@ Node** create_nodes(const int rank, Model& model) {
     Node* node;
 
     for (int n = 0; n < model.num_nodes; ++n) {
-        node = new Node(n, model, rank == 0); // Only the master reads the X values!
+        node = new Node(n, model, 1); // Only the master reads the X values!
         nodes[n] = node;
 
+        /*
         if (rank != 0) { // Workers
             node->tmp_hidden = (float*) calloc(node->dim_hidden, sizeof(float));
             node->hidden = (float*) calloc(node->dim_hidden, sizeof(float));
@@ -194,6 +254,8 @@ Node** create_nodes(const int rank, Model& model) {
             node->logits = (float*) calloc(node->num_classes, sizeof(float));
             node->x = (float*) calloc(model.dim_features, sizeof(float));
         }
+
+        MPI_Bcast(node->x, model.dim_features, MPI_FLOAT, 0, MPI_COMM_WORLD);*/
     }
 
     return nodes;
@@ -232,14 +294,12 @@ void create_graph(Node** nodes, Model &model) {
  *
  */
 
-void first_layer_transform(const int start, const int end, Node** nodes, Model& model) {
-    // // clean up previously computed values
-    // for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
-    //     node->tmp_hidden[c_out] = 0;
-    // }
+float* first_layer_transform(const int start, const int end, const int chunk_size, Node** nodes, Model& model) {
     Node* node;
 
-    // transform
+    // tmp_hidden for current chunk
+    float* chunk_tmp_hidden = (float*) calloc(chunk_size * model.dim_hidden, sizeof(float));
+
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -253,45 +313,50 @@ void first_layer_transform(const int start, const int end, Node** nodes, Model& 
             }
 
             for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
-                node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
+                float tmp_hidden_item = x_in * *(weight_1_start_idx + c_out);
+
+                node->tmp_hidden[c_out] += tmp_hidden_item;
+                chunk_tmp_hidden[(n - start) * model.dim_hidden + c_out] += tmp_hidden_item;
             }
         }
     }
+
+    return chunk_tmp_hidden;
 }
 
-void first_layer_aggregate(const int start, const int end, Node** nodes, Model &model) {
+float* first_layer_aggregate(const int start, const int end, Node** nodes, Model &model, float* tmp_hidden) {
     Node* node;
 
     float* message;
     float norm;
 
+    float* hidden_vector = (float*) calloc(model.num_nodes * model.dim_hidden, sizeof(float));
+
     // aggregate for each node
-    for (int n = start; n < end; ++n) {
+    for (int n = 0; n < model.num_nodes; ++n) {
         node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = nodes[neighbor]->tmp_hidden;
+            message = &tmp_hidden[neighbor * model.dim_hidden];
 
             // normalization w.r.t. degrees of node and neighbor
             norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
 
-            // aggregate normalized message
+            // aggregate normalized message and add bias
             for (int c = 0; c < node->dim_hidden; ++c) {
-                node->hidden[c] += message[c] / norm;
+                node->hidden[c] += message[c] / norm + model.bias_1[c] / node->degree;
             }
-        }
-
-        // add bias
-        for (int c = 0; c < node->dim_hidden; ++c) {
-            node->hidden[c] += model.bias_1[c];
         }
 
         // apply relu
         for (int c = 0; c < node->dim_hidden; ++c) {
             node->hidden[c] = (node->hidden[c] >= 0.0) * node->hidden[c];
+            hidden_vector[n * model.dim_hidden + c] = node->hidden[c];
         }
     }
+
+    return hidden_vector;
 }
 /***************************************************************************************/
 
@@ -303,10 +368,12 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
  *
  */
 
-void second_layer_transform(const int start, const int end, Node** nodes, Model& model) {
+float* second_layer_transform(const int start, const int end, const int chunk_size, Node** nodes, Model& model) {
     Node* node;
 
-    // transform
+    // tmp_logits for current chunk
+    float* chunk_tmp_logits = (float*) calloc(chunk_size * model.num_classes, sizeof(float));
+
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -320,13 +387,18 @@ void second_layer_transform(const int start, const int end, Node** nodes, Model&
             }
 
             for (int c_out = 0; c_out < node->num_classes; ++c_out) {
-                node->tmp_logits[c_out] += h_in * *(weight_2_start_idx + c_out);
+                float tmp_logit = h_in * *(weight_2_start_idx + c_out);
+
+                node->tmp_logits[c_out] += tmp_logit;
+                chunk_tmp_logits[(n - start) * model.num_classes + c_out] += tmp_logit;
             }
         }
     }
+
+    return chunk_tmp_logits;
 }
 
-void second_layer_aggregate(const int start, const int end, Node** nodes, Model &model) {
+void second_layer_aggregate(const int start, const int end, Node** nodes, Model &model, float* tmp_logits) {
     Node* node;
 
     float* message;
@@ -338,20 +410,15 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = nodes[neighbor]->tmp_logits;
+            message = &tmp_logits[neighbor * model.num_classes];
 
             // normalization w.r.t. degrees of node and neighbor
             norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
 
-            // aggregate normalized message
+            // aggregate normalized message and add bias
             for (int c = 0; c < node->num_classes; ++c) {
-                node->logits[c] += message[c] / norm;
+                node->logits[c] += message[c] / norm + model.bias_2[c] / node->degree;
             }
-        }
-
-        // add bias
-        for (int c = 0; c < node->num_classes; ++c) {
-            node->logits[c] += model.bias_2[c];
         }
     }        
 }
@@ -379,27 +446,6 @@ void compute_accuracy(const int start, const int end, Node** nodes, Model& model
 
 
 /***************************************************************************************/
-/*
- *
- * Function(s): Helper
- *
- */
-
-std::vector<int> find_neighbors_in_chunk(const int start, const int end, Node** nodes) {
-    std::vector<int> neighbors;
-
-    for (int n = start; n < end; ++n) {
-        for (int neighbor : nodes[n]->neighbors) {
-            neighbors.push_back(neighbor);
-        }
-    }
-
-    return neighbors;
-}
-/***************************************************************************************/
-
-
-/***************************************************************************************/
 int main(int argc, char** argv) {
     // initialize MPI
     MPI_Init(&argc, &argv);
@@ -416,6 +462,20 @@ int main(int argc, char** argv) {
     Node** nodes = create_nodes(rank, model);
     create_graph(nodes, model);
 
+
+    auto tick = std::chrono::high_resolution_clock::now();
+    for (int n = 0; n < model.num_nodes; ++n) {
+        for (int neighbor1 : nodes[n]->neighbors) {
+            for (int neighbor2 : nodes[neighbor1]->neighbors) {
+                //
+            }
+        }
+    }
+    auto tock = std::chrono::high_resolution_clock::now();
+
+    std::chrono::duration<double> elapsed_time = tock - tick;
+    std::cout << "elapsed time " << elapsed_time.count() << " second" << std::endl;
+
     /* 
      * Dynamic Scheduling:
      * 
@@ -425,119 +485,74 @@ int main(int argc, char** argv) {
      * Since other workers would have to wait the master in this case, we use dynamic scheduling!
      */
     // distribute work (exluding master since master distributes the work)
-    const int chunk_size = CHUNK_SIZE(model.num_nodes, (size - 1));
+    const int chunk_size = CHUNK_SIZE(model.num_nodes, size);
 
-    float sum_acc = 0.0;
+    const int start = rank * chunk_size;
+    const int end = END(start, chunk_size, model.num_nodes);
 
-    for (int p = 0; p < 3; ++p) {
-        int start = 0;
+    float* tmp_hidden = first_layer_transform(start, end, chunk_size, nodes, model);
+    float* tmp_hidden_gathered = (float*) calloc(model.num_nodes * model.dim_hidden, sizeof(float));
 
-        if (rank == 0) { // Master
-            for (; start < model.num_nodes; start += chunk_size) {
-                int curr_worker = provide_work_to_workers(&start);
-                const int end = END(start, chunk_size, model.num_nodes);
+    MPI_Allgather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
+                  tmp_hidden_gathered, chunk_size * model.dim_hidden, MPI_FLOAT, MPI_COMM_WORLD);
+    first_layer_aggregate(start, end, nodes, model, tmp_hidden_gathered);
 
-                // receive data request from worker
-                MPI_Recv(&curr_worker, 1, MPI_INT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    float* tmp_logits = second_layer_transform(start, end, chunk_size, nodes, model);
+    float* tmp_logits_gathered = (float*) calloc(model.num_nodes * model.num_classes, sizeof(float));
 
-                if (p == 0) {
-                    // send data to worker
-                    for (int n = start; n < end; ++n) {
-                        MPI_Send(nodes[n]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-                    }
+    MPI_Allgather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT, 
+                  tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, MPI_COMM_WORLD);
+    second_layer_aggregate(start, end, nodes, model, tmp_logits_gathered);
 
-                    // receive results from worker
-                    for (int n = start; n < end; ++n) {
-                        MPI_Recv(nodes[n]->tmp_hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    }
-                } else if (p == 1) {
-                    // send data to worker
-                    for (int neighbor : find_neighbors_in_chunk(start, end, nodes)) {
-                        MPI_Send(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-                    }
+    float acc = 0.0;
+    compute_accuracy(start, end, nodes, model, acc);
 
-                    // receive results from worker
-                    for (int n = start; n < end; ++n) {
-                        MPI_Recv(nodes[n]->tmp_logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    }
-                } else if (p == 2) {
-                    // send data to worker
-                    for (int neighbor : find_neighbors_in_chunk(start, end, nodes)) {
-                        MPI_Send(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-                    }
+    // for (int p = 0; p < 1; ++p) {
+    //     if (rank == 0) { // Master
+    //         for (; start < model.num_nodes; start += chunk_size) {
+    //             provide_work_to_workers(&start, chunk_size, nodes, model);
 
-                    // receive the computed accuracy from worker
-                    float acc = 0.0;
-                    MPI_Recv(&acc, 1, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    //             if (p == 0) {
 
-                    // add the computed accuracy received to the summed accuracy
-                    sum_acc += acc;
-                }
-            }
+    //             }
+    //         }
 
-            send_kill_signal_to_workers(size);
-        } else { // Workers
-            while (receive_work_from_master(rank, &start)) {
-                const int end = END(start, chunk_size, model.num_nodes);
+    //         send_kill_signal_to_workers(size);
+    //     } else { // Workers
+    //         while (receive_work_from_master(rank, &start, chunk_size, nodes, model)) {
+    //             const int end = END(start, chunk_size, model.num_nodes);
 
-                // send data request to worker
-                MPI_Send(&rank, 1, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+    //             // perform actual computation in network
+    //             float* local_tmp_hidden = first_layer_transform(start, end, chunk_size, nodes, model);
 
-                if (p == 0) {
-                    // receive data from master
-                    for (int n = start; n < end; ++n) {
-                        MPI_Recv(nodes[n]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    }
+    //             MPI_Allgather(local_tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
+    //                           tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, MPI_COMM_WORLD);
 
-                    // perform actual computation in network
-                    first_layer_transform(start, end, nodes, model);
+    //             // compute_accuracy(start, end, nodes, model, acc);
 
-                    // send results to master
-                    for (int n = start; n < end; ++n) {
-                        MPI_Send(nodes[n]->tmp_hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
-                    }
-                } else if (p == 1) {
-                    // receive data from master
-                    for (int neighbor : find_neighbors_in_chunk(start, end, nodes)) {
-                        MPI_Recv(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    }
+    //             // // provide master with results
+    //             // for (int n = start; n < end; ++n) {
+    //             //     //for (int neighbor : nodes[n]->neighbors) {
+    //             //         //MPI_Send(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
+    //             //         //MPI_Send(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
+    //             //         //MPI_Send(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
+    //             //     //}
 
-                    // perform actual computation in network
-                    first_layer_aggregate(start, end, nodes, model);
-                    second_layer_transform(start, end, nodes, model);
-
-                    // send results to master
-                    for (int n = start; n < end; ++n) {
-                        MPI_Send(nodes[n]->tmp_logits, model.num_classes, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
-                    }
-                } else if (p == 2) {
-                    // receive data from master
-                    for (int neighbor : find_neighbors_in_chunk(start, end, nodes)) {
-                        MPI_Recv(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                    }
-
-                    // perform actual computation in network
-                    second_layer_aggregate(start, end, nodes, model);
-
-                    // compute the accuracy
-                    float acc = 0.0;
-                    compute_accuracy(start, end, nodes, model, acc);
-
-                    // send the resulting accuracy to master
-                    MPI_Send(&acc, 1, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
-                }
-            }
-        }
-    }
+    //             // MPI_Send(nodes[n]->hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
+    //             // //MPI_Send(nodes[n]->logits, model.num_classes, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
+    //             // }
+    //         }
+    //     }
+    // }
 
     // collect accuracies from all processes and sum them up in the master
-    // float sum_acc;
+    //float sum_acc;
     //MPI_Reduce(&acc, &sum_acc, 1, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
 
     if (rank == 0) { // Master
-        sum_acc /= model.num_nodes;
+        acc /= model.num_nodes;
 
-        std::cout << "accuracy " << sum_acc << std::endl;
+        std::cout << "accuracy " << acc << std::endl;
         std::cout << "DONE" << std::endl;
 
         #if DEBUG

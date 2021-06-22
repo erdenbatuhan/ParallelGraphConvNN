@@ -51,7 +51,7 @@ mpi: gcn_mpi.cpp Model.cpp Model.hpp Node.cpp Node.hpp
 	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o mpi gcn_mpi.cpp Model.cpp Node.cpp
 
 run_mpi:
-	mpirun -np 6 --use-hwthread-cpus ./mpi
+	mpirun -np 4 ./mpi
 
 #-----------------------------------------------------------------------------------------#
 
