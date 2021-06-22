@@ -23,104 +23,30 @@
  *
  */
 
-#define TAG_WORK_REQUEST 101
-#define TAG_DATA_REQUEST 102
-#define TAG_RESULT_REQUEST 103
+#define TAG_DATA_COMM_X_VECTOR 102
 
-#define CHUNK_MULTIPLIER 1 // The more this multiplier is, the smaller the chunks will be
-#define WORK_KILL_SIGNAL -1 // Once this is received, the workers will stop requesting more work
-
-#define CHUNK_SIZE(num_nodes, size) std::ceil((float) num_nodes / (CHUNK_MULTIPLIER * size))
+#define CHUNK_SIZE(num_nodes, size) std::ceil((float) num_nodes / size)
 #define END(start, chunk_size, num_nodes) std::min(start + chunk_size, num_nodes)
 
 
-void provide_work_to_workers(int* start, const int chunk_size, Node** nodes, Model& model) { // Master
-    int curr_worker;
-    const int end = END(*(start), chunk_size, model.num_nodes);
+void bcast_x_vector(const int size, const int rank, const int start, const int end, const int chunk_size, 
+                    Node** nodes, Model& model) {
+    if (rank == 0) { // Master
+        // send X vector to all other processes
+        for (int curr_worker = 1; curr_worker < size; ++curr_worker) {
+            const int curr_start = curr_worker * chunk_size;
+            const int curr_end = END(curr_start, chunk_size, model.num_nodes);
 
-    // receive work request from worker and send work
-    MPI_Recv(&curr_worker, 1, MPI_INT, MPI_ANY_SOURCE, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    MPI_Send(start, 1, MPI_INT, curr_worker, TAG_WORK_REQUEST, MPI_COMM_WORLD);
-
-    // receive data request from worker
-    MPI_Recv(&curr_worker, 1, MPI_INT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-    // send data to worker (for each neighbor, send the corresponding X vector)
-    for (int n = *(start); n < end; ++n) {
-        //MPI_Send(&nodes[n]->degree, 1, MPI_INT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-        //MPI_Send(&nodes[n]->neighbors[0], nodes[n]->degree, MPI_INT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-
-        // for (int neighbor : nodes[n]->neighbors) {
-        //     // MPI_Send(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-        //     //MPI_Send(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-        //     //MPI_Send(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-        // }
-
-        MPI_Send(nodes[n]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-
-        //MPI_Send(nodes[n]->hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-        //MPI_Send(nodes[n]->logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_DATA_REQUEST, MPI_COMM_WORLD);
+            for (int n = curr_start; n < curr_end; ++n) {
+                MPI_Send(nodes[n]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_DATA_COMM_X_VECTOR, MPI_COMM_WORLD);
+            }
+        }
+    } else { // Workers
+        // receive X vector from master
+        for (int n = start; n < end; ++n) {
+            MPI_Recv(nodes[n]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_COMM_X_VECTOR, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
     }
-
-    // // get results from the workers
-    // for (int n = *(start); n < end; ++n) {
-    //     //for (int neighbor : nodes[n]->neighbors) {
-    //         //MPI_Recv(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    //         //MPI_Recv(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    //         //MPI_Recv(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    //     //}
-
-    //     MPI_Recv(nodes[n]->hidden, model.dim_hidden, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    //     //MPI_Recv(nodes[n]->logits, model.num_classes, MPI_FLOAT, curr_worker, TAG_RESULT_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    // }
-}
-
-void send_kill_signal_to_workers(const int size) { // Master
-    for (int i = 1; i < size; i++) {
-        int curr_worker;
-        const int work_kill_signal = WORK_KILL_SIGNAL;
-
-        // receive the last work request from worker and send kill signal (no work is left to do!)
-        MPI_Recv(&curr_worker, 1, MPI_INT, MPI_ANY_SOURCE, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        MPI_Send(&work_kill_signal, 1, MPI_INT, curr_worker, TAG_WORK_REQUEST, MPI_COMM_WORLD);
-    }
-}
-
-bool receive_work_from_master(const int rank, int* start, const int chunk_size, Node** nodes, Model& model) { // Workers
-    // request and receive work from the master
-    MPI_Send(&rank, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD);
-    MPI_Recv(start, 1, MPI_INT, 0, TAG_WORK_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-    // check if the master does not have any more work left to do
-    if (*(start) == WORK_KILL_SIGNAL) {
-        return false;
-    }
-
-    // send data request to worker
-    MPI_Send(&rank, 1, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD);
-
-    const int end = END(*(start), chunk_size, model.num_nodes);
-
-    // receive data from worker (for each neighbor, receive the corresponding X vector)
-    for (int n = *(start); n < end; ++n) {
-        //MPI_Recv(&nodes[n]->degree, 1, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        //nodes[n]->neighbors.resize(nodes[n]->degree);
-        //MPI_Recv(&nodes[n]->neighbors[0], nodes[n]->degree, MPI_INT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        // for (int neighbor : nodes[n]->neighbors) {
-        //     MPI_Recv(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        //     //MPI_Recv(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        //     //MPI_Recv(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        // }
-
-        MPI_Recv(nodes[n]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        //MPI_Recv(nodes[n]->hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        //MPI_Recv(nodes[n]->logits, model.num_classes, MPI_FLOAT, 0, TAG_DATA_REQUEST, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-    }
-
-    return true;
 }
 /***************************************************************************************/
 
@@ -200,7 +126,7 @@ Model load_model(const int rank, std::string dataset, int init_no, int seed) {
 
 Model create_model(const int rank) {
     // initialize the parameters needed for model creation
-    std::string dataset("COAUTHORCS");
+    std::string dataset("");
     int init_no = -1;
     int seed = -1;
 
@@ -230,7 +156,6 @@ Model create_model(const int rank) {
  */
 
 Node** create_nodes(const int rank, Model& model) {
-    // create graph (i.e. load data into each node and load edge structure)
     Node** nodes = (Node**) malloc(model.num_nodes * sizeof(Node*));
 
     if (nodes == nullptr) {
@@ -243,10 +168,9 @@ Node** create_nodes(const int rank, Model& model) {
     Node* node;
 
     for (int n = 0; n < model.num_nodes; ++n) {
-        node = new Node(n, model, 1); // Only the master reads the X values!
+        node = new Node(n, model, rank == 0); // Only the master reads the X values!
         nodes[n] = node;
 
-        /*
         if (rank != 0) { // Workers
             node->tmp_hidden = (float*) calloc(node->dim_hidden, sizeof(float));
             node->hidden = (float*) calloc(node->dim_hidden, sizeof(float));
@@ -254,8 +178,6 @@ Node** create_nodes(const int rank, Model& model) {
             node->logits = (float*) calloc(node->num_classes, sizeof(float));
             node->x = (float*) calloc(model.dim_features, sizeof(float));
         }
-
-        MPI_Bcast(node->x, model.dim_features, MPI_FLOAT, 0, MPI_COMM_WORLD);*/
     }
 
     return nodes;
@@ -294,7 +216,7 @@ void create_graph(Node** nodes, Model &model) {
  *
  */
 
-float* first_layer_transform(const int start, const int end, const int chunk_size, Node** nodes, Model& model) {
+float* first_layer_transform(const int chunk_size, const int start, const int end, Node** nodes, Model& model) {
     Node* node;
 
     // tmp_hidden for current chunk
@@ -316,7 +238,7 @@ float* first_layer_transform(const int start, const int end, const int chunk_siz
                 float tmp_hidden_item = x_in * *(weight_1_start_idx + c_out);
 
                 node->tmp_hidden[c_out] += tmp_hidden_item;
-                chunk_tmp_hidden[(n - start) * model.dim_hidden + c_out] += tmp_hidden_item;
+                chunk_tmp_hidden[(n - start) * node->dim_hidden + c_out] += tmp_hidden_item;
             }
         }
     }
@@ -324,13 +246,11 @@ float* first_layer_transform(const int start, const int end, const int chunk_siz
     return chunk_tmp_hidden;
 }
 
-float* first_layer_aggregate(const int start, const int end, Node** nodes, Model &model, float* tmp_hidden) {
+void first_layer_aggregate(Node** nodes, Model &model, float* tmp_hidden, float* full_hidden) {
     Node* node;
 
     float* message;
     float norm;
-
-    float* hidden_vector = (float*) calloc(model.num_nodes * model.dim_hidden, sizeof(float));
 
     // aggregate for each node
     for (int n = 0; n < model.num_nodes; ++n) {
@@ -352,11 +272,9 @@ float* first_layer_aggregate(const int start, const int end, Node** nodes, Model
         // apply relu
         for (int c = 0; c < node->dim_hidden; ++c) {
             node->hidden[c] = (node->hidden[c] >= 0.0) * node->hidden[c];
-            hidden_vector[n * model.dim_hidden + c] = node->hidden[c];
+            full_hidden[n * model.dim_hidden + c] = node->hidden[c];
         }
     }
-
-    return hidden_vector;
 }
 /***************************************************************************************/
 
@@ -368,7 +286,7 @@ float* first_layer_aggregate(const int start, const int end, Node** nodes, Model
  *
  */
 
-float* second_layer_transform(const int start, const int end, const int chunk_size, Node** nodes, Model& model) {
+float* second_layer_transform(const int chunk_size, const int start, const int end, Node** nodes, Model& model, float* full_hidden) {
     Node* node;
 
     // tmp_logits for current chunk
@@ -378,7 +296,7 @@ float* second_layer_transform(const int start, const int end, const int chunk_si
         node = nodes[n];
 
         for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
-            float h_in = node->hidden[c_in];
+            float h_in = full_hidden[n * model.dim_hidden + c_in];
             float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
 
             // if the input is zero, do not calculate the corresponding logits
@@ -390,7 +308,7 @@ float* second_layer_transform(const int start, const int end, const int chunk_si
                 float tmp_logit = h_in * *(weight_2_start_idx + c_out);
 
                 node->tmp_logits[c_out] += tmp_logit;
-                chunk_tmp_logits[(n - start) * model.num_classes + c_out] += tmp_logit;
+                chunk_tmp_logits[(n - start) * node->num_classes + c_out] += tmp_logit;
             }
         }
     }
@@ -398,14 +316,14 @@ float* second_layer_transform(const int start, const int end, const int chunk_si
     return chunk_tmp_logits;
 }
 
-void second_layer_aggregate(const int start, const int end, Node** nodes, Model &model, float* tmp_logits) {
+void second_layer_aggregate(Node** nodes, Model &model, float* tmp_logits) {
     Node* node;
 
     float* message;
     float norm;
 
     // aggregate for each node
-    for (int n = start; n < end; ++n) {
+    for (int n = 0; n < model.num_nodes; ++n) {
         node = nodes[n];
 
         // aggregate from each neighbor
@@ -432,15 +350,19 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
  *
  */
 
-void compute_accuracy(const int start, const int end, Node** nodes, Model& model, float& acc) {
+float compute_accuracy(Node** nodes, Model& model) {
     int pred, correct;
+    float acc = 0.0;
 
-    for (int n = start; n < end; ++n) {
+    for (int n = 0; n < model.num_nodes; ++n) {
         pred = nodes[n]->get_prediction();
         correct = pred == model.labels[n];
 
         acc += (float) correct;
     }
+
+    acc /= model.num_nodes;
+    return acc;
 }
 /***************************************************************************************/
 
@@ -458,99 +380,60 @@ int main(int argc, char** argv) {
     // create model (master reads, workers receive!)
     Model model = create_model(rank);
 
-    // create graph (only the master loads data and edge structure!)
+    // create graph (only the master loads data and edge structure!)    
     Node** nodes = create_nodes(rank, model);
     create_graph(nodes, model);
 
-
-    auto tick = std::chrono::high_resolution_clock::now();
-    for (int n = 0; n < model.num_nodes; ++n) {
-        for (int neighbor1 : nodes[n]->neighbors) {
-            for (int neighbor2 : nodes[neighbor1]->neighbors) {
-                //
-            }
-        }
-    }
-    auto tock = std::chrono::high_resolution_clock::now();
-
-    std::chrono::duration<double> elapsed_time = tock - tick;
-    std::cout << "elapsed time " << elapsed_time.count() << " second" << std::endl;
-
-    /* 
-     * Dynamic Scheduling:
-     * 
-     * A one worker might process more nodes than others as we do not know how the graph is built.  
-     * For example, if we divided nodes by n chunks and the first chunk had more neighbors than others,
-     * the master would process more nodes than the workers and hence be slower.
-     * Since other workers would have to wait the master in this case, we use dynamic scheduling!
-     */
     // distribute work (exluding master since master distributes the work)
     const int chunk_size = CHUNK_SIZE(model.num_nodes, size);
-
     const int start = rank * chunk_size;
     const int end = END(start, chunk_size, model.num_nodes);
 
-    float* tmp_hidden = first_layer_transform(start, end, chunk_size, nodes, model);
-    float* tmp_hidden_gathered = (float*) calloc(model.num_nodes * model.dim_hidden, sizeof(float));
+    /*
+     * First layer operations
+     */
 
-    MPI_Allgather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
-                  tmp_hidden_gathered, chunk_size * model.dim_hidden, MPI_FLOAT, MPI_COMM_WORLD);
-    first_layer_aggregate(start, end, nodes, model, tmp_hidden_gathered);
+    // broadcast X vector between all processes
+    bcast_x_vector(size, rank, start, end, chunk_size, nodes, model);
 
-    float* tmp_logits = second_layer_transform(start, end, chunk_size, nodes, model);
-    float* tmp_logits_gathered = (float*) calloc(model.num_nodes * model.num_classes, sizeof(float));
+    // stores the hidden info of each node
+    float* full_hidden = (float*) calloc(model.num_nodes * model.dim_hidden, sizeof(float));
 
-    MPI_Allgather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT, 
-                  tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, MPI_COMM_WORLD);
-    second_layer_aggregate(start, end, nodes, model, tmp_logits_gathered);
-
-    float acc = 0.0;
-    compute_accuracy(start, end, nodes, model, acc);
-
-    // for (int p = 0; p < 1; ++p) {
-    //     if (rank == 0) { // Master
-    //         for (; start < model.num_nodes; start += chunk_size) {
-    //             provide_work_to_workers(&start, chunk_size, nodes, model);
-
-    //             if (p == 0) {
-
-    //             }
-    //         }
-
-    //         send_kill_signal_to_workers(size);
-    //     } else { // Workers
-    //         while (receive_work_from_master(rank, &start, chunk_size, nodes, model)) {
-    //             const int end = END(start, chunk_size, model.num_nodes);
-
-    //             // perform actual computation in network
-    //             float* local_tmp_hidden = first_layer_transform(start, end, chunk_size, nodes, model);
-
-    //             MPI_Allgather(local_tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
-    //                           tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, MPI_COMM_WORLD);
-
-    //             // compute_accuracy(start, end, nodes, model, acc);
-
-    //             // // provide master with results
-    //             // for (int n = start; n < end; ++n) {
-    //             //     //for (int neighbor : nodes[n]->neighbors) {
-    //             //         //MPI_Send(nodes[neighbor]->x, model.dim_features, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
-    //             //         //MPI_Send(nodes[neighbor]->tmp_hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
-    //             //         //MPI_Send(nodes[neighbor]->tmp_logits, model.num_classes, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
-    //             //     //}
-
-    //             // MPI_Send(nodes[n]->hidden, model.dim_hidden, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
-    //             // //MPI_Send(nodes[n]->logits, model.num_classes, MPI_FLOAT, 0, TAG_RESULT_REQUEST, MPI_COMM_WORLD);
-    //             // }
-    //         }
-    //     }
-    // }
-
-    // collect accuracies from all processes and sum them up in the master
-    //float sum_acc;
-    //MPI_Reduce(&acc, &sum_acc, 1, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
+    float* tmp_hidden = first_layer_transform(chunk_size, start, end, nodes, model);
 
     if (rank == 0) { // Master
-        acc /= model.num_nodes;
+        float* tmp_hidden_gathered = (float*) calloc(model.num_nodes * model.dim_hidden, sizeof(float));
+        MPI_Gather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
+                   tmp_hidden_gathered, chunk_size * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+        first_layer_aggregate(nodes, model, tmp_hidden_gathered, full_hidden);
+    } else { // Workers
+        MPI_Gather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
+                   NULL, chunk_size * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    }
+
+    /*
+     * Second layer operations
+     */
+
+    // broadcast hidden vector between all processes
+    MPI_Bcast(full_hidden, model.num_nodes * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+    float* tmp_logits = second_layer_transform(chunk_size, start, end, nodes, model, full_hidden);
+
+    if (rank == 0) { // Master
+        float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
+        MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT, 
+                   tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+        second_layer_aggregate(nodes, model, tmp_logits_gathered);
+    } else { // Workers
+        MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT, 
+                   NULL, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    }
+
+    if (rank == 0) { // Master
+        float acc = compute_accuracy(nodes, model);
 
         std::cout << "accuracy " << acc << std::endl;
         std::cout << "DONE" << std::endl;
