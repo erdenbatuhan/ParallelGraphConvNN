@@ -246,19 +246,19 @@ float* first_layer_transform(const int chunk_size, const int start, const int en
     return chunk_tmp_hidden;
 }
 
-void first_layer_aggregate(Node** nodes, Model &model, float* tmp_hidden, float* full_hidden) {
+void first_layer_aggregate(const int start, const int end, Node** nodes, Model &model, float* big_tmp_hidden) {
     Node* node;
 
     float* message;
     float norm;
 
     // aggregate for each node
-    for (int n = 0; n < model.num_nodes; ++n) {
+    for (int n = start; n < end; ++n) {
         node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = &tmp_hidden[neighbor * model.dim_hidden];
+            message = &big_tmp_hidden[neighbor * model.dim_hidden];
 
             // normalization w.r.t. degrees of node and neighbor
             norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
@@ -272,7 +272,6 @@ void first_layer_aggregate(Node** nodes, Model &model, float* tmp_hidden, float*
         // apply relu
         for (int c = 0; c < node->dim_hidden; ++c) {
             node->hidden[c] = (node->hidden[c] >= 0.0) * node->hidden[c];
-            full_hidden[n * model.dim_hidden + c] = node->hidden[c];
         }
     }
 }
@@ -286,7 +285,7 @@ void first_layer_aggregate(Node** nodes, Model &model, float* tmp_hidden, float*
  *
  */
 
-float* second_layer_transform(const int chunk_size, const int start, const int end, Node** nodes, Model& model, float* full_hidden) {
+float* second_layer_transform(const int chunk_size, const int start, const int end, Node** nodes, Model& model) {
     Node* node;
 
     // tmp_logits for current chunk
@@ -296,7 +295,7 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
         node = nodes[n];
 
         for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
-            float h_in = full_hidden[n * model.dim_hidden + c_in];
+            float h_in = node->hidden[c_in];
             float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
 
             // if the input is zero, do not calculate the corresponding logits
@@ -316,19 +315,19 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
     return chunk_tmp_logits;
 }
 
-void second_layer_aggregate(Node** nodes, Model &model, float* tmp_logits) {
+void second_layer_aggregate(const int start, const int end, Node** nodes, Model &model, float* big_tmp_logits) {
     Node* node;
 
     float* message;
     float norm;
 
     // aggregate for each node
-    for (int n = 0; n < model.num_nodes; ++n) {
+    for (int n = start; n < end; ++n) {
         node = nodes[n];
 
         // aggregate from each neighbor
         for (int neighbor : node->neighbors) {
-            message = &tmp_logits[neighbor * model.num_classes];
+            message = &big_tmp_logits[neighbor * model.num_classes];
 
             // normalization w.r.t. degrees of node and neighbor
             norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
@@ -346,23 +345,18 @@ void second_layer_aggregate(Node** nodes, Model &model, float* tmp_logits) {
 /***************************************************************************************/
 /*
  *
- * Function(s): Computing the accuracy
+ * Function(s): Getting the number of correct predictions
  *
  */
 
-float compute_accuracy(Node** nodes, Model& model) {
-    int pred, correct;
-    float acc = 0.0;
+float get_num_correct_preds(const int start, const int end, Node** nodes, Model& model) {
+    int correct = 0.0;
 
-    for (int n = 0; n < model.num_nodes; ++n) {
-        pred = nodes[n]->get_prediction();
-        correct = pred == model.labels[n];
-
-        acc += (float) correct;
+    for (int n = start; n < end; ++n) {
+        correct += nodes[n]->get_prediction() == model.labels[n];
     }
 
-    acc /= model.num_nodes;
-    return acc;
+    return correct;
 }
 /***************************************************************************************/
 
@@ -389,55 +383,55 @@ int main(int argc, char** argv) {
     const int start = rank * chunk_size;
     const int end = END(start, chunk_size, model.num_nodes);
 
+    // broadcast X vector between all processes (needed for computing the first layer transform)
+    bcast_x_vector(size, rank, start, end, chunk_size, nodes, model);
+
     /*
      * First layer operations
      */
 
-    // broadcast X vector between all processes
-    bcast_x_vector(size, rank, start, end, chunk_size, nodes, model);
-
-    // stores the hidden info of each node
-    float* full_hidden = (float*) calloc(model.num_nodes * model.dim_hidden, sizeof(float));
-
+    // first layer transform
     float* tmp_hidden = first_layer_transform(chunk_size, start, end, nodes, model);
+    float* tmp_hidden_gathered = (float*) calloc(chunk_size * size * model.dim_hidden, sizeof(float));
 
-    if (rank == 0) { // Master
-        // over-allocate in case there are remainders ("chunk_size * size" instead of "model.num_nodes")
-        float* tmp_hidden_gathered = (float*) calloc(chunk_size * size * model.dim_hidden, sizeof(float));
+    // gather and broadcast => tmp_hidden
+    MPI_Gather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT,
+               tmp_hidden_gathered, chunk_size * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(tmp_hidden_gathered, chunk_size * size * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
-        MPI_Gather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
-                   tmp_hidden_gathered, chunk_size * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
-        first_layer_aggregate(nodes, model, tmp_hidden_gathered, full_hidden);
-    } else { // Workers
-        MPI_Gather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT, 
-                   NULL, chunk_size * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    }
+    // first layer aggregate
+    first_layer_aggregate(start, end, nodes, model, tmp_hidden_gathered);
 
     /*
      * Second layer operations
      */
 
-    // broadcast hidden vector between all processes
-    MPI_Bcast(full_hidden, model.num_nodes * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    // second layer transform
+    float* tmp_logits = second_layer_transform(chunk_size, start, end, nodes, model);
+    float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
 
-    float* tmp_logits = second_layer_transform(chunk_size, start, end, nodes, model, full_hidden);
+    // gather and broadcast => tmp_logits
+    MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT,
+               tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(tmp_logits_gathered, chunk_size * size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+    // second layer aggregate
+    second_layer_aggregate(start, end, nodes, model, tmp_logits_gathered);
+
+    /*
+     * Accuracy computation
+     */
+
+    // calculate the current number of correct predictions
+    int num_correct_preds = get_num_correct_preds(start, end, nodes, model);
+
+    // collect the number of correct predictions from all processes and sum them up in the master
+    int total_num_correct_preds;
+    MPI_Reduce(&num_correct_preds, &total_num_correct_preds, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
 
     if (rank == 0) { // Master
-        // over-allocate in case there are remainders ("chunk_size * size" instead of "model.num_nodes")
-        float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
-
-        MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT, 
-                   tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
-        second_layer_aggregate(nodes, model, tmp_logits_gathered);
-    } else { // Workers
-        MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT, 
-                   NULL, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    }
-
-    if (rank == 0) { // Master
-        float acc = compute_accuracy(nodes, model);
+        // compute the accuracy
+        float acc = (float) total_num_correct_preds / model.num_nodes;
 
         std::cout << "accuracy " << acc << std::endl;
         std::cout << "DONE" << std::endl;
