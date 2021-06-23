@@ -7,6 +7,7 @@
  *
  */
 
+#include <omp.h>
 #include <mpi.h>
 
 #include "Model.hpp"
@@ -14,6 +15,7 @@
 
 
 #define DEBUG 0
+#define NUM_THREADS 16
 
 
 /***************************************************************************************/
@@ -167,6 +169,7 @@ Node** create_nodes(const int rank, Model& model) {
     // initialize nodes
     Node* node;
 
+    #pragma omp parallel for firstprivate(node)
     for (int n = 0; n < model.num_nodes; ++n) {
         node = new Node(n, model, rank == 0); // Only the master reads the X values!
         nodes[n] = node;
@@ -187,6 +190,7 @@ void create_graph(Node** nodes, Model &model) {
     // set neighbor relations
     int source, target;
 
+    // TODO: Parallelize?
     for (int e = 0; e < model.num_edges; ++e) {
         source = model.edges[e];
         target = model.edges[model.num_edges + e];
@@ -199,8 +203,11 @@ void create_graph(Node** nodes, Model &model) {
     }
 
     // add self-loops
+    Node* node;
+
+    #pragma omp parallel for firstprivate(node)
     for (int n = 0; n < model.num_nodes; ++n) {
-        Node *node = nodes[n];
+        node = nodes[n];
 
         node->neighbors.push_back(node->ID);
         node->degree = node->neighbors.size();
@@ -222,6 +229,7 @@ float* first_layer_transform(const int chunk_size, const int start, const int en
     // tmp_hidden for current chunk
     float* chunk_tmp_hidden = (float*) calloc(chunk_size * model.dim_hidden, sizeof(float));
 
+    #pragma omp parallel for firstprivate(node)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -253,6 +261,7 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
     float norm;
 
     // aggregate for each node
+    #pragma omp parallel for firstprivate(node, message, norm)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -291,6 +300,7 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
     // tmp_logits for current chunk
     float* chunk_tmp_logits = (float*) calloc(chunk_size * model.num_classes, sizeof(float));
 
+    #pragma omp parallel for firstprivate(node)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -322,6 +332,7 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
     float norm;
 
     // aggregate for each node
+    #pragma omp parallel for firstprivate(node, message, norm)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -352,6 +363,7 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
 float get_num_correct_preds(const int start, const int end, Node** nodes, Model& model) {
     int correct = 0.0;
 
+    #pragma omp parallel for reduction(+: correct)
     for (int n = start; n < end; ++n) {
         correct += nodes[n]->get_prediction() == model.labels[n];
     }
@@ -370,6 +382,9 @@ int main(int argc, char** argv) {
     // determine the size and the rank
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    // give equal number of threads to each process
+    omp_set_num_threads(NUM_THREADS / size);
 
     // create model (master reads, workers receive!)
     Model model = create_model(rank);
@@ -445,7 +460,8 @@ int main(int argc, char** argv) {
         #endif
     }
 
-    // clean-up 
+    // clean-up
+    #pragma omp parallel for
     for (int n = 0; n < model.num_nodes; ++n) {
         nodes[n]->free_node();
         delete nodes[n];
