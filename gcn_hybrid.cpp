@@ -16,6 +16,7 @@
 
 #define DEBUG 0
 #define NUM_THREADS 24
+#define DYNAMIC_SCHEDULING_CHUNK_SIZE 32
 
 
 /***************************************************************************************/
@@ -229,7 +230,8 @@ float* first_layer_transform(const int chunk_size, const int start, const int en
     // tmp_hidden for current chunk
     float* chunk_tmp_hidden = (float*) calloc(chunk_size * model.dim_hidden, sizeof(float));
 
-    #pragma omp parallel for private(node)
+    // dynamic scheduling since some nodes can have more 0s in their inputs!
+    #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -261,7 +263,8 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
     float norm;
 
     // aggregate for each node
-    #pragma omp parallel for private(node, message, norm)
+    // dynamic scheduling since neighbors might not be uniformly distributed accross the nodes!
+    #pragma omp parallel for private(node, message, norm) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -300,7 +303,8 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
     // tmp_logits for current chunk
     float* chunk_tmp_logits = (float*) calloc(chunk_size * model.num_classes, sizeof(float));
 
-    #pragma omp parallel for private(node)
+    // dynamic scheduling since some nodes can have more 0s in their inputs!
+    #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -332,7 +336,8 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
     float norm;
 
     // aggregate for each node
-    #pragma omp parallel for private(node, message, norm)
+    // dynamic scheduling since neighbors might not be uniformly distributed accross the nodes!
+    #pragma omp parallel for private(node, message, norm) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
