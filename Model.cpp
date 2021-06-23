@@ -246,7 +246,7 @@ void Model::specify_problem(std::string &dataset, int* init_no, int* seed){
     std::cerr << "Specify seed ";
     std::cin >> *seed;
     *init_no = -1; // -1, i.e. random weights
-    dataset = "COAUTHORCS";
+    dataset = "COAUTHORCS"; // CITESEER, COAUTHORCS, CORA, PUBMED
 
     validate_input(dataset, *init_no, *seed);
 }
