@@ -15,7 +15,7 @@
 
 
 #define DEBUG 0
-#define NUM_THREADS 16
+#define NUM_THREADS 24
 
 
 /***************************************************************************************/
@@ -169,7 +169,7 @@ Node** create_nodes(const int rank, Model& model) {
     // initialize nodes
     Node* node;
 
-    #pragma omp parallel for firstprivate(node)
+    #pragma omp parallel for private(node)
     for (int n = 0; n < model.num_nodes; ++n) {
         node = new Node(n, model, rank == 0); // Only the master reads the X values!
         nodes[n] = node;
@@ -205,7 +205,7 @@ void create_graph(Node** nodes, Model &model) {
     // add self-loops
     Node* node;
 
-    #pragma omp parallel for firstprivate(node)
+    #pragma omp parallel for private(node)
     for (int n = 0; n < model.num_nodes; ++n) {
         node = nodes[n];
 
@@ -229,7 +229,7 @@ float* first_layer_transform(const int chunk_size, const int start, const int en
     // tmp_hidden for current chunk
     float* chunk_tmp_hidden = (float*) calloc(chunk_size * model.dim_hidden, sizeof(float));
 
-    #pragma omp parallel for firstprivate(node)
+    #pragma omp parallel for private(node)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -261,7 +261,7 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
     float norm;
 
     // aggregate for each node
-    #pragma omp parallel for firstprivate(node, message, norm)
+    #pragma omp parallel for private(node, message, norm)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -300,7 +300,7 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
     // tmp_logits for current chunk
     float* chunk_tmp_logits = (float*) calloc(chunk_size * model.num_classes, sizeof(float));
 
-    #pragma omp parallel for firstprivate(node)
+    #pragma omp parallel for private(node)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -332,7 +332,7 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
     float norm;
 
     // aggregate for each node
-    #pragma omp parallel for firstprivate(node, message, norm)
+    #pragma omp parallel for private(node, message, norm)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -423,28 +423,36 @@ int main(int argc, char** argv) {
 
     // second layer transform
     float* tmp_logits = second_layer_transform(chunk_size, start, end, nodes, model);
-    float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
 
-    // gather and broadcast => tmp_logits
-    MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT,
-               tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(tmp_logits_gathered, chunk_size * size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
-    // second layer aggregate
-    second_layer_aggregate(start, end, nodes, model, tmp_logits_gathered);
-
-    /*
-     * Accuracy computation
-     */
-
-    // calculate the current number of correct predictions
-    int num_correct_preds = get_num_correct_preds(start, end, nodes, model);
-
-    // collect the number of correct predictions from all processes and sum them up in the master
-    int total_num_correct_preds;
-    MPI_Reduce(&num_correct_preds, &total_num_correct_preds, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    // give master more threads to work with (workers are done with the computation!)
+    if (rank == 0) { // Master
+        omp_set_num_threads(NUM_THREADS - size);
+    } else { // Workers
+        omp_set_num_threads(1);
+    }
 
     if (rank == 0) { // Master
+        float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
+
+        // gather => tmp_logits
+        MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT,
+                   tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+        // second layer aggregate
+        second_layer_aggregate(0, model.num_nodes, nodes, model, tmp_logits_gathered);
+    } else { // Workers
+        MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT,
+                   NULL, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    }
+
+    /*
+     * Accuracy computation & printing
+     */
+
+    if (rank == 0) { // Master
+        // calculate the current number of correct predictions
+        int total_num_correct_preds = get_num_correct_preds(0, model.num_nodes, nodes, model);
+
         // compute the accuracy
         float acc = (float) total_num_correct_preds / model.num_nodes;
 
