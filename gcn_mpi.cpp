@@ -378,7 +378,7 @@ int main(int argc, char** argv) {
     Node** nodes = create_nodes(rank, model);
     create_graph(nodes, model);
 
-    // distribute work (exluding master since master distributes the work)
+    // distribute work
     const int chunk_size = CHUNK_SIZE(model.num_nodes, size);
     const int start = rank * chunk_size;
     const int end = END(start, chunk_size, model.num_nodes);
