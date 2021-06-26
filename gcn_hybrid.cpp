@@ -1,7 +1,7 @@
 /*
  *
  * File: gcn_mpi.cpp
- * Authors: Batuhan Erden, Yigit Kemal Erinc and Berk Bolgul
+ * Author: Batuhan Erden
  * Created by: Batuhan Erden
  * Created on: Jun 9, 2021
  *
