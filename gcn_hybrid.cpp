@@ -428,29 +428,28 @@ int main(int argc, char** argv) {
 
     // second layer transform
     float* tmp_logits = second_layer_transform(chunk_size, start, end, nodes, model);
+    float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
 
-    if (rank == 0) { // Master
-        float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
+    // gather and broadcast => tmp_logits
+    MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT,
+               tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(tmp_logits_gathered, chunk_size * size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
-        // gather => tmp_logits
-        MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT,
-                   tmp_logits_gathered, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
-        // second layer aggregate
-        second_layer_aggregate(0, model.num_nodes, nodes, model, tmp_logits_gathered);
-    } else { // Workers
-        MPI_Gather(tmp_logits, chunk_size * model.num_classes, MPI_FLOAT,
-                   NULL, chunk_size * model.num_classes, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    }
+    // second layer aggregate
+    second_layer_aggregate(start, end, nodes, model, tmp_logits_gathered);
 
     /*
-     * Accuracy computation & printing
+     * Accuracy computation
      */
 
-    if (rank == 0) { // Master
-        // calculate the current number of correct predictions
-        int total_num_correct_preds = get_num_correct_preds(0, model.num_nodes, nodes, model);
+    // calculate the current number of correct predictions
+    int num_correct_preds = get_num_correct_preds(start, end, nodes, model);
 
+    // collect the number of correct predictions from all processes and sum them up in the master
+    int total_num_correct_preds;
+    MPI_Reduce(&num_correct_preds, &total_num_correct_preds, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    if (rank == 0) { // Master
         // compute the accuracy
         float acc = (float) total_num_correct_preds / model.num_nodes;
 
