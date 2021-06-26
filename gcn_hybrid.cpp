@@ -15,7 +15,7 @@
 
 
 #define DEBUG 0
-#define NUM_THREADS 24
+#define NUM_THREADS 4 // Number of threads per compute node
 #define DYNAMIC_SCHEDULING_CHUNK_SIZE 32
 
 
@@ -389,7 +389,7 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     // give equal number of threads to each process
-    omp_set_num_threads(NUM_THREADS / size);
+    omp_set_num_threads(NUM_THREADS);
 
     // create model (master reads, workers receive!)
     Model model = create_model(rank);
@@ -428,13 +428,6 @@ int main(int argc, char** argv) {
 
     // second layer transform
     float* tmp_logits = second_layer_transform(chunk_size, start, end, nodes, model);
-
-    // give master more threads to work with (workers are done with the computation!)
-    if (rank == 0) { // Master
-        omp_set_num_threads(NUM_THREADS - size);
-    } else { // Workers
-        omp_set_num_threads(1);
-    }
 
     if (rank == 0) { // Master
         float* tmp_logits_gathered = (float*) calloc(chunk_size * size * model.num_classes, sizeof(float));
