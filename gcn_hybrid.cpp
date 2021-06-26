@@ -466,7 +466,6 @@ int main(int argc, char** argv) {
     }
 
     // clean-up
-    #pragma omp parallel for
     for (int n = 0; n < model.num_nodes; ++n) {
         nodes[n]->free_node();
         delete nodes[n];
