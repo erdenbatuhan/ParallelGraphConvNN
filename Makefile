@@ -66,6 +66,15 @@ run_hybrid:
 
 
 #-----------------------------------------------------------------------------------------#
+hybrid-simd: gcn_hybrid-simd.cpp Model.cpp Model.hpp Node.cpp Node.hpp
+	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o hybrid-simd gcn_hybrid-simd.cpp Model.cpp Node.cpp
+
+run_hybrid-simd:
+	mpirun -np 2 ./hybrid-simd
+#-----------------------------------------------------------------------------------------#
+
+
+#-----------------------------------------------------------------------------------------#
 clean:
 	rm -rf *.o sequential omp mpi hybrid
 #-----------------------------------------------------------------------------------------#
