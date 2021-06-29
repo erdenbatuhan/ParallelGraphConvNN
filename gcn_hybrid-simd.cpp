@@ -31,27 +31,6 @@
 
 #define CHUNK_SIZE(num_nodes, size) std::ceil((float) num_nodes / size)
 #define END(start, chunk_size, num_nodes) std::min(start + chunk_size, num_nodes)
-
-
-void bcast_x_vector(const int size, const int rank, const int start, const int end, const int chunk_size,
-                    Node** nodes, Model& model) {
-    if (rank == 0) { // Master
-        // send X vector to all other processes
-        for (int curr_worker = 1; curr_worker < size; ++curr_worker) {
-            const int curr_start = curr_worker * chunk_size;
-            const int curr_end = END(curr_start, chunk_size, model.num_nodes);
-
-            for (int n = curr_start; n < curr_end; ++n) {
-                MPI_Send(nodes[n]->x, model.dim_features, MPI_FLOAT, curr_worker, TAG_DATA_COMM_X_VECTOR, MPI_COMM_WORLD);
-            }
-        }
-    } else { // Workers
-        // receive X vector from master
-        for (int n = start; n < end; ++n) {
-            MPI_Recv(nodes[n]->x, model.dim_features, MPI_FLOAT, 0, TAG_DATA_COMM_X_VECTOR, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        }
-    }
-}
 /***************************************************************************************/
 
 
@@ -225,32 +204,29 @@ void create_graph(Node** nodes, Model &model) {
  *
  */
 
-void inner_first_layer_transform_simd(const int n, const int start, Node* node, float* weight_1, float* chunk_tmp_hidden) {
+void inner_first_layer_transform_simd(const int n, const int start, Node* node, const int c_in, float* weight_1, float* chunk_tmp_hidden) {
     const int last_chunk_idx = node->dim_hidden - (node->dim_hidden % 8) - 1;
+    __m256 x_in = _mm256_set1_ps(node->x[c_in]); // node->x[c_in]
 
-    for (int c_in = 0; c_in < node->dim_features; ++c_in) {
-        __m256 x_in = _mm256_set1_ps(node->x[c_in]); // node->x[c_in]
+    // vectorized loop
+    for (int c_out = 0; c_out <= last_chunk_idx; c_out += 8) {
+        __m256 partial_sum = _mm256_loadu_ps(node->tmp_hidden + c_out);
 
-        // vectorized loop
-        for (int c_out = 0; c_out <= last_chunk_idx; c_out += 8) {
-            __m256 partial_sum = _mm256_loadu_ps(node->tmp_hidden + c_out);
+        __m256 w_out = _mm256_loadu_ps(weight_1 + c_in * node->dim_hidden + c_out); // model.weight_1[c_in * node->dim_hidden + c_out]
+        __m256 hidden_mult = _mm256_mul_ps(x_in, w_out); // node->x[c_in] * model.weight_1[c_in * node->dim_hidden + c_out]
 
-            __m256 w_out = _mm256_loadu_ps(weight_1 + c_in * node->dim_hidden + c_out); // model.weight_1[c_in * node->dim_hidden + c_out]
-            __m256 hidden_mult = _mm256_mul_ps(x_in, w_out); // node->x[c_in] * model.weight_1[c_in * node->dim_hidden + c_out]
+        partial_sum = _mm256_add_ps(partial_sum, hidden_mult); // += node->x[c_in] * model.weight_1[c_in * node->dim_hidden + c_out]
 
-            partial_sum = _mm256_add_ps(partial_sum, hidden_mult); // += node->x[c_in] * model.weight_1[c_in * node->dim_hidden + c_out]
+        _mm256_storeu_ps(node->tmp_hidden + c_out, partial_sum);
+        _mm256_storeu_ps(chunk_tmp_hidden + (n - start) * node->dim_hidden + c_out, partial_sum);
+    }
 
-            _mm256_storeu_ps(node->tmp_hidden + c_out, partial_sum);
-            _mm256_storeu_ps(chunk_tmp_hidden + (n - start) * node->dim_hidden + c_out, partial_sum);
-        }
+    // the remainder chunk is processed
+    for (int c_out = last_chunk_idx + 1; c_out < node->dim_hidden; ++c_out) {
+        float tmp_hidden_item = node->x[c_in] * weight_1[c_in * node->dim_hidden + c_out];
 
-        // the remainder chunk is processed
-        for (int c_out = last_chunk_idx + 1; c_out < node->dim_hidden; ++c_out) {
-            float tmp_hidden_item = node->x[c_in] * weight_1[c_in * node->dim_hidden + c_out];
-
-            node->tmp_hidden[c_out] += tmp_hidden_item;
-            chunk_tmp_hidden[(n - start) * node->dim_hidden + c_out] += tmp_hidden_item;
-        }
+        node->tmp_hidden[c_out] += tmp_hidden_item;
+        chunk_tmp_hidden[(n - start) * node->dim_hidden + c_out] += tmp_hidden_item;
     }
 }
 
@@ -264,10 +240,46 @@ float* first_layer_transform(const int chunk_size, const int start, const int en
     #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
-        inner_first_layer_transform_simd(n, start, node, model.weight_1, chunk_tmp_hidden);
+
+        for (int c_in = 0; c_in < node->dim_features; ++c_in) {
+            // if the input is zero, do not calculate the corresponding hidden values
+            if (node->x[c_in] == 0) {
+                continue;
+            }
+
+            inner_first_layer_transform_simd(n, start, node, c_in, model.weight_1, chunk_tmp_hidden);
+        }
     }
 
     return chunk_tmp_hidden;
+}
+
+void inner_first_layer_aggregate_simd(Node* node, float* message, float norm, float* bias_1) {
+    const int last_chunk_idx = node->dim_hidden - (node->dim_hidden % 8) - 1;
+
+    __m256 norm_ps = _mm256_set1_ps(norm);
+    __m256 degree_ps = _mm256_set1_ps(node->degree);
+
+    // vectorized loop
+    for (int c = 0; c <= last_chunk_idx; c += 8) {
+        __m256 partial_sum = _mm256_loadu_ps(node->hidden + c);
+
+        __m256 message_ps = _mm256_loadu_ps(message + c);
+        __m256 message_div_ps = _mm256_div_ps(message_ps, norm_ps);
+
+        __m256 bias_ps = _mm256_loadu_ps(bias_1 + c);
+        __m256 bias_div_ps = _mm256_div_ps(bias_ps, degree_ps);
+
+        __m256 inner_sum = _mm256_add_ps(message_div_ps, bias_div_ps);
+        partial_sum = _mm256_add_ps(partial_sum, inner_sum);
+
+        _mm256_storeu_ps(node->hidden + c, partial_sum);
+    }
+
+    // the remainder chunk is processed
+    for (int c = last_chunk_idx + 1; c < node->dim_hidden; ++c) {
+        node->hidden[c] += message[c] / norm + bias_1[c] / node->degree;
+    }
 }
 
 void first_layer_aggregate(const int start, const int end, Node** nodes, Model &model, float* big_tmp_hidden) {
@@ -290,9 +302,7 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
             norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
 
             // aggregate normalized message and add bias
-            for (int c = 0; c < node->dim_hidden; ++c) {
-                node->hidden[c] += message[c] / norm + model.bias_1[c] / node->degree;
-            }
+            inner_first_layer_aggregate_simd(node, message, norm, model.bias_1);
         }
 
         // apply relu
@@ -311,32 +321,29 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
  *
  */
 
-void inner_second_layer_transform_simd(const int n, const int start, Node* node, float* weight_2, float* chunk_tmp_logits) {
+void inner_second_layer_transform_simd(const int n, const int start, Node* node, const int c_in, float* weight_2, float* chunk_tmp_logits) {
     const int last_chunk_idx = node->num_classes - (node->num_classes % 8) - 1;
+    __m256 h_in = _mm256_set1_ps(node->hidden[c_in]); // node->hidden[c_in]
 
-    for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
-        __m256 h_in = _mm256_set1_ps(node->hidden[c_in]); // node->hidden[c_in]
+    // vectorized loop
+    for (int c_out = 0; c_out <= last_chunk_idx; c_out += 8) {
+        __m256 partial_sum = _mm256_loadu_ps(node->tmp_logits + c_out);
 
-        // vectorized loop
-        for (int c_out = 0; c_out <= last_chunk_idx; c_out += 8) {
-            __m256 partial_sum = _mm256_loadu_ps(node->tmp_logits + c_out);
+        __m256 w_out = _mm256_loadu_ps(weight_2 + c_in * node->num_classes + c_out); // model.weight_2[c_in * node->num_classes + c_out]
+        __m256 hidden_mult = _mm256_mul_ps(h_in, w_out); // node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out]
 
-            __m256 w_out = _mm256_loadu_ps(weight_2 + c_in * node->num_classes + c_out); // model.weight_2[c_in * node->num_classes + c_out]
-            __m256 hidden_mult = _mm256_mul_ps(h_in, w_out); // node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out]
+        partial_sum = _mm256_add_ps(partial_sum, hidden_mult); // += node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out]
 
-            partial_sum = _mm256_add_ps(partial_sum, hidden_mult); // += node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out]
+        _mm256_storeu_ps(node->tmp_logits + c_out, partial_sum);
+        _mm256_storeu_ps(chunk_tmp_logits + (n - start) * node->num_classes + c_out, partial_sum);
+    }
 
-            _mm256_storeu_ps(node->tmp_logits + c_out, partial_sum);
-            _mm256_storeu_ps(chunk_tmp_logits + (n - start) * node->num_classes + c_out, partial_sum);
-        }
+    // the remainder chunk is processed
+    for (int c_out = last_chunk_idx + 1; c_out < node->num_classes; ++c_out) {
+        float tmp_logit = node->hidden[c_in] * weight_2[c_in * node->num_classes + c_out];
 
-        // the remainder chunk is processed
-        for (int c_out = last_chunk_idx + 1; c_out < node->num_classes; ++c_out) {
-            float tmp_logit = node->hidden[c_in] * weight_2[c_in * node->num_classes + c_out];
-
-            node->tmp_logits[c_out] += tmp_logit;
-            chunk_tmp_logits[(n - start) * node->num_classes + c_out] += tmp_logit;
-        }
+        node->tmp_logits[c_out] += tmp_logit;
+        chunk_tmp_logits[(n - start) * node->num_classes + c_out] += tmp_logit;
     }
 }
 
@@ -350,10 +357,46 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
     #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
-        inner_second_layer_transform_simd(n, start, node, model.weight_2, chunk_tmp_logits);
+
+        for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
+            // if the input is zero, do not calculate the corresponding logits
+            if (node->hidden[c_in] == 0) {
+                continue;
+            }
+
+            inner_second_layer_transform_simd(n, start, node, c_in, model.weight_2, chunk_tmp_logits);
+        }
     }
 
     return chunk_tmp_logits;
+}
+
+void inner_second_layer_aggregate_simd(Node* node, float* message, float norm, float* bias_2) {
+    const int last_chunk_idx = node->num_classes - (node->num_classes % 8) - 1;
+
+    __m256 norm_ps = _mm256_set1_ps(norm);
+    __m256 degree_ps = _mm256_set1_ps(node->degree);
+
+    // vectorized loop
+    for (int c = 0; c <= last_chunk_idx; c += 8) {
+        __m256 partial_sum = _mm256_loadu_ps(node->logits + c);
+
+        __m256 message_ps = _mm256_loadu_ps(message + c);
+        __m256 message_div_ps = _mm256_div_ps(message_ps, norm_ps);
+
+        __m256 bias_ps = _mm256_loadu_ps(bias_2 + c);
+        __m256 bias_div_ps = _mm256_div_ps(bias_ps, degree_ps);
+
+        __m256 inner_sum = _mm256_add_ps(message_div_ps, bias_div_ps);
+        partial_sum = _mm256_add_ps(partial_sum, inner_sum);
+
+        _mm256_storeu_ps(node->logits + c, partial_sum);
+    }
+
+    // the remainder chunk is processed
+    for (int c = last_chunk_idx + 1; c < node->num_classes; ++c) {
+        node->logits[c] += message[c] / norm + bias_2[c] / node->degree;
+    }
 }
 
 void second_layer_aggregate(const int start, const int end, Node** nodes, Model &model, float* big_tmp_logits) {
@@ -376,9 +419,7 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
             norm = 1.0 / sqrt(node->degree * nodes[neighbor]->degree);
 
             // aggregate normalized message and add bias
-            for (int c = 0; c < node->num_classes; ++c) {
-                node->logits[c] += message[c] / norm + model.bias_2[c] / node->degree;
-            }
+            inner_second_layer_aggregate_simd(node, message, norm, model.bias_2);
         }
     }        
 }
@@ -430,24 +471,28 @@ int main(int argc, char** argv) {
     const int start = rank * chunk_size;
     const int end = END(start, chunk_size, model.num_nodes);
 
-    // broadcast X vector between all processes (needed for computing the first layer transform)
-    bcast_x_vector(size, rank, start, end, chunk_size, nodes, model);
-
     /*
      * First layer operations
      */
 
     // first layer transform
-    float* tmp_hidden = first_layer_transform(chunk_size, start, end, nodes, model);
-    float* tmp_hidden_gathered = (float*) calloc(chunk_size * size * model.dim_hidden, sizeof(float));
+    float* big_tmp_hidden = (float*) calloc(model.num_nodes * model.dim_hidden, sizeof(float));
 
-    // gather and broadcast => tmp_hidden
-    MPI_Gather(tmp_hidden, chunk_size * model.dim_hidden, MPI_FLOAT,
-               tmp_hidden_gathered, chunk_size * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
-    MPI_Bcast(tmp_hidden_gathered, chunk_size * size * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
+    if (rank == 0) { // Master
+        // set num threads to simulate the results better in the server!
+        omp_set_num_threads(omp_get_num_threads());
+
+        big_tmp_hidden = first_layer_transform(model.num_nodes, 0, model.num_nodes, nodes, model);
+
+        // set num threads back to the original!
+        omp_set_num_threads(NUM_THREADS);
+    }
+
+    // broadcast the big tmp hidden (to be used in first layer aggregate by all processes!)
+    MPI_Bcast(big_tmp_hidden, model.num_nodes * model.dim_hidden, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
     // first layer aggregate
-    first_layer_aggregate(start, end, nodes, model, tmp_hidden_gathered);
+    first_layer_aggregate(start, end, nodes, model, big_tmp_hidden);
 
     /*
      * Second layer operations
