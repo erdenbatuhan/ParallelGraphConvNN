@@ -230,6 +230,7 @@ float* first_layer_transform(const int chunk_size, const int start, const int en
     // tmp_hidden for current chunk
     float* chunk_tmp_hidden = (float*) calloc(chunk_size * model.dim_hidden, sizeof(float));
 
+    // transform
     // dynamic scheduling since some nodes can have more 0s in their inputs!
     #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
@@ -303,6 +304,7 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
     // tmp_logits for current chunk
     float* chunk_tmp_logits = (float*) calloc(chunk_size * model.num_classes, sizeof(float));
 
+    // transform
     // dynamic scheduling since some nodes can have more 0s in their inputs!
     #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
