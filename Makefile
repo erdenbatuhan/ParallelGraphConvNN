@@ -66,11 +66,11 @@ run_hybrid:
 
 
 #-----------------------------------------------------------------------------------------#
-bonus: gcn_bonus.cpp Model.cpp Model.hpp Node.cpp Node.hpp
-	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o bonus gcn_bonus.cpp Model.cpp Node.cpp
+hybrid-simd: gcn_hybrid-simd.cpp Model.cpp Model.hpp Node.cpp Node.hpp
+	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o hybrid-simd gcn_hybrid-simd.cpp Model.cpp Node.cpp
 
-run_bonus:
-	mpirun -np 2 ./bonus
+run_hybrid-simd:
+	mpirun -np 2 ./hybrid-simd
 #-----------------------------------------------------------------------------------------#
 
 

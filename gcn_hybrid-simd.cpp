@@ -33,7 +33,7 @@
 #define END(start, chunk_size, num_nodes) std::min(start + chunk_size, num_nodes)
 
 
-void bcast_x_vector(const int size, const int rank, const int start, const int end, const int chunk_size, 
+void bcast_x_vector(const int size, const int rank, const int start, const int end, const int chunk_size,
                     Node** nodes, Model& model) {
     if (rank == 0) { // Master
         // send X vector to all other processes
@@ -225,42 +225,32 @@ void create_graph(Node** nodes, Model &model) {
  *
  */
 
-void first_layer_transform_inner_operation_simd(Node* node, float* weight_1, float* chunk_tmp_hidden) {
-    // if the input is zero, do not calculate the corresponding hidden values
-    if (node->x[c_in] == 0) {
-        return;
-    }
+void inner_first_layer_transform_simd(const int n, const int start, Node* node, float* weight_1, float* chunk_tmp_hidden) {
+    const int last_chunk_idx = node->dim_hidden - (node->dim_hidden % 8) - 1;
 
-    const int lastChunkIdx = node->dim_hidden - (node->dim_hidden % 8) - 1;
+    for (int c_in = 0; c_in < node->dim_features; ++c_in) {
+        __m256 x_in = _mm256_set1_ps(node->x[c_in]); // node->x[c_in]
 
-    __m256 partialSum = _mm256_set1_ps(0);
-    float partialSumArr[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        // vectorized loop
+        for (int c_out = 0; c_out <= last_chunk_idx; c_out += 8) {
+            __m256 partial_sum = _mm256_loadu_ps(node->tmp_hidden + c_out);
 
-    __m256 x_in = _mm256_loadu_ps(node->x + c_in); // x_in[c_in]
-    float* weight_1_start_idx = weight_1 + (c_in * node->dim_hidden);
+            __m256 w_out = _mm256_loadu_ps(weight_1 + c_in * node->dim_hidden + c_out); // model.weight_1[c_in * node->dim_hidden + c_out]
+            __m256 hidden_mult = _mm256_mul_ps(x_in, w_out); // node->x[c_in] * model.weight_1[c_in * node->dim_hidden + c_out]
 
-    // vectorized loop
-    for (int c_out = 0; c_out <= lastChunkIdx; c_out += 8) {
-        __m256 w_out = _mm256_loadu_ps(weight_1_start_idx + c_out); // model.weight_1[c_in * node->dim_hidden + c_out]
-        __m256 hidden_mult = _mm256_mul_ps(x_in, w_out); // x_in[c_in] * model.weight_1[c_in * node->dim_hidden + c_out]
+            partial_sum = _mm256_add_ps(partial_sum, hidden_mult); // += node->x[c_in] * model.weight_1[c_in * node->dim_hidden + c_out]
 
-        partialSum = _mm256_add_ps(partialSum, hidden_mult);
-    }
+            _mm256_storeu_ps(node->tmp_hidden + c_out, partial_sum);
+            _mm256_storeu_ps(chunk_tmp_hidden + (n - start) * node->dim_hidden + c_out, partial_sum);
+        }
 
-    _mm256_storeu_ps(partialSumArr, partialSum);
+        // the remainder chunk is processed
+        for (int c_out = last_chunk_idx + 1; c_out < node->dim_hidden; ++c_out) {
+            float tmp_hidden_item = node->x[c_in] * weight_1[c_in * node->dim_hidden + c_out];
 
-    // tmp_hidden[c_out] += x_in[c_in] * model.weight_1[c_in * node->dim_hidden + c_out]
-    for (int c_out = 0; c_out < 8; c_out++) {
-        node->tmp_hidden[c_out] += partialSumArr[c_out];
-        chunk_tmp_hidden[(n - start) * node->dim_hidden + c_out] += partialSumArr[c_out];
-    }
-
-    // the remainder chunk (size < 8) is processed
-    for (int c_out = lastChunkIdx + 1; c_out < MATRIX_SIZE; c_out++) {
-        float tmp_hidden_item = x_in * *(weight_1_start_idx + c_out);
-
-        node->tmp_hidden[c_out] += tmp_hidden_item;
-        chunk_tmp_hidden[(n - start) * node->dim_hidden + c_out] += tmp_hidden_item;
+            node->tmp_hidden[c_out] += tmp_hidden_item;
+            chunk_tmp_hidden[(n - start) * node->dim_hidden + c_out] += tmp_hidden_item;
+        }
     }
 }
 
@@ -274,10 +264,7 @@ float* first_layer_transform(const int chunk_size, const int start, const int en
     #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
-
-        for (int c_in = 0; c_in < node->dim_features; ++c_in) {
-            first_layer_transform_inner_operation_simd(node, model.weight_1, chunk_tmp_hidden);
-        }
+        inner_first_layer_transform_simd(n, start, node, model.weight_1, chunk_tmp_hidden);
     }
 
     return chunk_tmp_hidden;
@@ -324,6 +311,35 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
  *
  */
 
+void inner_second_layer_transform_simd(const int n, const int start, Node* node, float* weight_2, float* chunk_tmp_logits) {
+    const int last_chunk_idx = node->num_classes - (node->num_classes % 8) - 1;
+
+    for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
+        __m256 h_in = _mm256_set1_ps(node->hidden[c_in]); // node->hidden[c_in]
+
+        // vectorized loop
+        for (int c_out = 0; c_out <= last_chunk_idx; c_out += 8) {
+            __m256 partial_sum = _mm256_loadu_ps(node->tmp_logits + c_out);
+
+            __m256 w_out = _mm256_loadu_ps(weight_2 + c_in * node->num_classes + c_out); // model.weight_2[c_in * node->num_classes + c_out]
+            __m256 hidden_mult = _mm256_mul_ps(h_in, w_out); // node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out]
+
+            partial_sum = _mm256_add_ps(partial_sum, hidden_mult); // += node->hidden[c_in] * model.weight_2[c_in * node->num_classes + c_out]
+
+            _mm256_storeu_ps(node->tmp_logits + c_out, partial_sum);
+            _mm256_storeu_ps(chunk_tmp_logits + (n - start) * node->num_classes + c_out, partial_sum);
+        }
+
+        // the remainder chunk is processed
+        for (int c_out = last_chunk_idx + 1; c_out < node->num_classes; ++c_out) {
+            float tmp_logit = node->hidden[c_in] * weight_2[c_in * node->num_classes + c_out];
+
+            node->tmp_logits[c_out] += tmp_logit;
+            chunk_tmp_logits[(n - start) * node->num_classes + c_out] += tmp_logit;
+        }
+    }
+}
+
 float* second_layer_transform(const int chunk_size, const int start, const int end, Node** nodes, Model& model) {
     Node* node;
 
@@ -334,23 +350,7 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
     #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
-
-        for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
-            float h_in = node->hidden[c_in];
-            float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
-
-            // if the input is zero, do not calculate the corresponding logits
-            if (h_in == 0) {
-                continue;
-            }
-
-            for (int c_out = 0; c_out < node->num_classes; ++c_out) {
-                float tmp_logit = h_in * *(weight_2_start_idx + c_out);
-
-                node->tmp_logits[c_out] += tmp_logit;
-                chunk_tmp_logits[(n - start) * node->num_classes + c_out] += tmp_logit;
-            }
-        }
+        inner_second_layer_transform_simd(n, start, node, model.weight_2, chunk_tmp_logits);
     }
 
     return chunk_tmp_logits;
