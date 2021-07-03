@@ -1,6 +1,6 @@
 /*
  *
- * File: gcn_sequential_fast.cpp
+ * File: gcn_sequential-fast.cpp
  * Author: Batuhan Erden
  * Created by: Batuhan Erden
  * Created on: Jun 9, 2021

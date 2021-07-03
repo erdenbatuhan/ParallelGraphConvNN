@@ -56,10 +56,10 @@ void first_layer_transform(Node** nodes, int num_nodes, Model& model) {
                 float x_in = node->x[c_in];
                 float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
 
-	            // if the input is zero, do not calculate the corresponding hidden values
-	            if (x_in == 0) {
-	                continue;
-	            }
+                // if the input is zero, do not calculate the corresponding hidden values
+                if (x_in == 0) {
+                    continue;
+                }
 
                 for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
                     node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
