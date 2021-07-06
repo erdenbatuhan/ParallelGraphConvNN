@@ -13,7 +13,6 @@
 #include "Node.hpp"
 
 
-#define DEBUG 0
 #define NUM_THREADS 16
 
 
@@ -159,13 +158,7 @@ int main(int argc, char** argv) {
     std::string dataset("");
 
     // specify problem
-    #if DEBUG
-        // for measuring your local runtime
-        auto tick = std::chrono::high_resolution_clock::now();
-        Model::specify_problem(argc, argv, dataset, &init_no, &seed);
-    #else
-        Model::specify_problem(dataset, &init_no, &seed);
-    #endif
+    Model::specify_problem(dataset, &init_no, &seed);
 
     // load model specifications and model weights
     Model model(dataset, init_no, seed);
@@ -214,14 +207,6 @@ int main(int argc, char** argv) {
 
     std::cout << "accuracy " << acc << std::endl;
     std::cout << "DONE" << std::endl;
-
-    #if DEBUG
-        // for measuring your local runtime
-        auto tock = std::chrono::high_resolution_clock::now();
-
-        std::chrono::duration<double> elapsed_time = tock - tick;
-        std::cout << "elapsed time " << elapsed_time.count() << " second" << std::endl;
-    #endif
 
     // clean-up
     #pragma omp parallel for

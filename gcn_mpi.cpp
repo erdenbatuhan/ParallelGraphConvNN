@@ -13,9 +13,6 @@
 #include "Node.hpp"
 
 
-#define DEBUG 0
-
-
 /***************************************************************************************/
 /*
  *
@@ -133,13 +130,7 @@ Model create_model(const int rank) {
     // read input to specify problem, then load model specifications and model weights
     if (rank == 0) { // Master
         // specify problem
-        #if DEBUG
-            // for measuring your local runtime
-            auto tick = std::chrono::high_resolution_clock::now();
-            Model::specify_problem(argc, argv, dataset, &init_no, &seed);
-        #else
-            Model::specify_problem(dataset, &init_no, &seed);
-        #endif
+        Model::specify_problem(dataset, &init_no, &seed);
     }
 
     // load or receive model
@@ -435,14 +426,6 @@ int main(int argc, char** argv) {
 
         std::cout << "accuracy " << acc << std::endl;
         std::cout << "DONE" << std::endl;
-
-        #if DEBUG
-            // for measuring your local runtime
-            auto tock = std::chrono::high_resolution_clock::now();
-
-            std::chrono::duration<double> elapsed_time = tock - tick;
-            std::cout << "elapsed time " << elapsed_time.count() << " second" << std::endl;
-        #endif
     }
 
     // clean-up 
