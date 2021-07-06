@@ -28,17 +28,17 @@ perf.*
 !data/*.zip
 
 # ParProg
-sequential_improved
-sequential
-omp
-mpi
-hybrid
-hybrid-simd
-sequential_submission
-omp_submission
-mpi_submission
-hybrid_submission
-hybrid-simd_submission
+./sequential_improved
+./sequential
+./omp
+./mpi
+./hybrid
+./hybrid-simd
+./sequential_submission
+./omp_submission
+./mpi_submission
+./hybrid_submission
+./hybrid-simd_submission
 
 # Accidentally created files by make cmd
 -o
