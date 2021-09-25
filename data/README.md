@@ -11,5 +11,3 @@ Before being able to use datasets, you have to extract them from the `.zip` arch
 - for testing your code, you might find those actual datasets with reasonable accuracy values more accuracte
 - also note that those datasets have different characteristics and might help you identifying runtime characteristics
 
-# IMPORTANT NOTE
-- DO NOT add unzipped datasets to your git repository!
