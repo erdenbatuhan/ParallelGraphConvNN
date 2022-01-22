@@ -7,8 +7,8 @@
  *
  */
 
-#include "Model.hpp"
-#include "Node.hpp"
+#include "model/Model.hpp"
+#include "model/Node.hpp"
 
 
 #define DEBUG 0

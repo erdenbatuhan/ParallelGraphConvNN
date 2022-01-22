@@ -45,3 +45,7 @@ perf.*
 -fopenmp
 -DOMPI_SKIP_MPICXX
 
+# IDEs
+.idea/
+.vscode/
+

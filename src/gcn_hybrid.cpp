@@ -7,10 +7,15 @@
  *
  */
 
+#include <omp.h>
 #include <mpi.h>
 
-#include "Model.hpp"
-#include "Node.hpp"
+#include "model/Model.hpp"
+#include "model/Node.hpp"
+
+
+#define NUM_THREADS 4 // Number of threads per compute node
+#define DYNAMIC_SCHEDULING_CHUNK_SIZE 32
 
 
 /***************************************************************************************/
@@ -158,6 +163,7 @@ Node** create_nodes(const int rank, Model& model) {
     // initialize nodes
     Node* node;
 
+    #pragma omp parallel for private(node)
     for (int n = 0; n < model.num_nodes; ++n) {
         node = new Node(n, model, rank == 0); // Only the master reads the X values!
         nodes[n] = node;
@@ -178,6 +184,7 @@ void create_graph(Node** nodes, Model &model) {
     // set neighbor relations
     int source, target;
 
+    // TODO: Parallelize?
     for (int e = 0; e < model.num_edges; ++e) {
         source = model.edges[e];
         target = model.edges[model.num_edges + e];
@@ -190,8 +197,11 @@ void create_graph(Node** nodes, Model &model) {
     }
 
     // add self-loops
+    Node* node;
+
+    #pragma omp parallel for private(node)
     for (int n = 0; n < model.num_nodes; ++n) {
-        Node *node = nodes[n];
+        node = nodes[n];
 
         node->neighbors.push_back(node->ID);
         node->degree = node->neighbors.size();
@@ -213,6 +223,9 @@ float* first_layer_transform(const int chunk_size, const int start, const int en
     // tmp_hidden for current chunk
     float* chunk_tmp_hidden = (float*) calloc(chunk_size * model.dim_hidden, sizeof(float));
 
+    // transform
+    // dynamic scheduling since some nodes can have more 0s in their inputs!
+    #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -244,6 +257,8 @@ void first_layer_aggregate(const int start, const int end, Node** nodes, Model &
     float norm;
 
     // aggregate for each node
+    // dynamic scheduling since neighbors might not be uniformly distributed accross the nodes!
+    #pragma omp parallel for private(node, message, norm) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -282,6 +297,9 @@ float* second_layer_transform(const int chunk_size, const int start, const int e
     // tmp_logits for current chunk
     float* chunk_tmp_logits = (float*) calloc(chunk_size * model.num_classes, sizeof(float));
 
+    // transform
+    // dynamic scheduling since some nodes can have more 0s in their inputs!
+    #pragma omp parallel for private(node) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -313,6 +331,8 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
     float norm;
 
     // aggregate for each node
+    // dynamic scheduling since neighbors might not be uniformly distributed accross the nodes!
+    #pragma omp parallel for private(node, message, norm) schedule(dynamic, DYNAMIC_SCHEDULING_CHUNK_SIZE)
     for (int n = start; n < end; ++n) {
         node = nodes[n];
 
@@ -343,6 +363,7 @@ void second_layer_aggregate(const int start, const int end, Node** nodes, Model 
 float get_num_correct_preds(const int start, const int end, Node** nodes, Model& model) {
     int correct = 0.0;
 
+    #pragma omp parallel for reduction(+: correct)
     for (int n = start; n < end; ++n) {
         correct += nodes[n]->get_prediction() == model.labels[n];
     }
@@ -362,6 +383,9 @@ int main(int argc, char** argv) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
+    // give equal number of threads to each process
+    omp_set_num_threads(NUM_THREADS);
+
     // create model (master reads, workers receive!)
     Model model = create_model(rank);
 
@@ -369,7 +393,7 @@ int main(int argc, char** argv) {
     Node** nodes = create_nodes(rank, model);
     create_graph(nodes, model);
 
-    // distribute work
+    // distribute work (exluding master since master distributes the work)
     const int chunk_size = CHUNK_SIZE(model.num_nodes, size);
     const int start = rank * chunk_size;
     const int end = END(start, chunk_size, model.num_nodes);
@@ -428,7 +452,7 @@ int main(int argc, char** argv) {
         std::cout << "DONE" << std::endl;
     }
 
-    // clean-up 
+    // clean-up
     for (int n = 0; n < model.num_nodes; ++n) {
         nodes[n]->free_node();
         delete nodes[n];

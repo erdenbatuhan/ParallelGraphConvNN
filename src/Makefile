@@ -20,6 +20,9 @@ endif
 
 OPENMP = -fopenmp
 
+MODEL_DECLARATION = model/Model.hpp model/Node.hpp
+MODEL_COMPILED = model/Model.cpp model/Node.cpp
+
 
 #-----------------------------------------------------------------------------------------#
 all: sequential omp mpi hybrid
@@ -27,8 +30,8 @@ all: sequential omp mpi hybrid
 
 
 #-----------------------------------------------------------------------------------------#
-sequential: gcn_sequential.cpp Model.cpp Model.hpp Node.cpp Node.hpp
-	$(CXX) $(CXX_FLAGS) $(OPENMP) -o sequential gcn_sequential.cpp Model.cpp Node.cpp
+sequential: gcn_sequential.cpp $(MODEL_DECLARATION) $(MODEL_COMPILED)
+	$(CXX) $(CXX_FLAGS) $(OPENMP) -o $@ $< $(MODEL_COMPILED)
 
 run_sequential: 
 	./sequential
@@ -37,8 +40,8 @@ run_sequential:
 
 
 #-----------------------------------------------------------------------------------------#
-omp: gcn_omp.cpp Model.cpp Model.hpp Node.cpp Node.hpp
-	$(CXX) $(CXX_FLAGS) $(OPENMP) -o omp gcn_omp.cpp Model.cpp Node.cpp
+omp: gcn_omp.cpp $(MODEL_DECLARATION) $(MODEL_COMPILED)
+	$(CXX) $(CXX_FLAGS) $(OPENMP) -o $@ $< $(MODEL_COMPILED)
 
 run_omp:
 	./omp
@@ -47,8 +50,8 @@ run_omp:
 
 
 #-----------------------------------------------------------------------------------------#
-mpi: gcn_mpi.cpp Model.cpp Model.hpp Node.cpp Node.hpp
-	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o mpi gcn_mpi.cpp Model.cpp Node.cpp
+mpi: gcn_mpi.cpp $(MODEL_DECLARATION) $(MODEL_COMPILED)
+	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o $@ $< $(MODEL_COMPILED)
 
 run_mpi:
 	mpirun -np 6 --use-hwthread-cpus ./mpi
@@ -57,8 +60,8 @@ run_mpi:
 
 
 #-----------------------------------------------------------------------------------------#
-hybrid: gcn_hybrid.cpp Model.cpp Model.hpp Node.cpp Node.hpp
-	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o hybrid gcn_hybrid.cpp Model.cpp Node.cpp
+hybrid: gcn_hybrid.cpp $(MODEL_DECLARATION) $(MODEL_COMPILED)
+	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o $@ $< $(MODEL_COMPILED)
 
 run_hybrid:
 	mpirun -np 2 ./hybrid
@@ -66,8 +69,8 @@ run_hybrid:
 
 
 #-----------------------------------------------------------------------------------------#
-hybrid-simd: gcn_hybrid-simd.cpp Model.cpp Model.hpp Node.cpp Node.hpp
-	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o hybrid-simd gcn_hybrid-simd.cpp Model.cpp Node.cpp
+hybrid-simd: gcn_hybrid-simd.cpp $(MODEL_DECLARATION) $(MODEL_COMPILED)
+	$(MPICXX) $(MPICXX_FLAGS) $(OPENMP) -o $@ $< $(MODEL_COMPILED)
 
 run_hybrid-simd:
 	mpirun -np 2 ./hybrid-simd

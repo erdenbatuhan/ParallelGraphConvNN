@@ -1,14 +1,14 @@
 /*
  *
- * File: gcn_sequential-fast.cpp
+ * File: gcn_sequential-faster.cpp
  * Author: Batuhan Erden
  * Created by: Batuhan Erden
  * Created on: Jun 9, 2021
  *
  */
 
-#include "Model.hpp"
-#include "Node.hpp"
+#include "model/Model.hpp"
+#include "model/Node.hpp"
 
 
 #define DEBUG 0
@@ -48,6 +48,11 @@ void first_layer_transform(Node** nodes, int num_nodes, Model& model) {
         for (int c_in = 0; c_in < node->dim_features; ++c_in) {
             float x_in = node->x[c_in];
             float* weight_1_start_idx = model.weight_1 + (c_in * node->dim_hidden);
+
+            // if the input is zero, do not calculate the corresponding hidden values
+            if (x_in == 0) {
+                continue;
+            }
 
             for (int c_out = 0; c_out < node->dim_hidden; ++c_out) {
                 node->tmp_hidden[c_out] += x_in * *(weight_1_start_idx + c_out);
@@ -96,6 +101,11 @@ void second_layer_transform(Node** nodes, int num_nodes, Model& model) {
         for (int c_in = 0; c_in < node->dim_hidden; ++c_in) {
             float h_in = node->hidden[c_in];
             float* weight_2_start_idx = model.weight_2 + (c_in * node->num_classes);
+
+            // if the input is zero, do not calculate the corresponding logits
+            if (h_in == 0) {
+                continue;
+            }
 
             for (int c_out = 0; c_out < node->num_classes; ++c_out) {
                 node->tmp_logits[c_out] += h_in * *(weight_2_start_idx + c_out);
